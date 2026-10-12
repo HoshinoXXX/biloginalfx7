@@ -1,0 +1,16 @@
+Package: com.hoshinoxxx.biloginalfx7.bisect2
+Name: BiloginalfX7-Bisect2
+Version: 6.4-Bisect2
+Section: Tweaks
+Maintainer: HoshinoXXX
+Author: HoshinoXXX
+Architecture: iphoneos-arm
+Depends: mobilesubstrate | cydia-substrate, firmware (>= 7.0)
+Tag: purpose::extension, compatible_min::ios7.0
+Description: Second bisect round for BiloginalfX7 - internal diagnostics only.
+ Isolates BRStore from BRSession to find which translation unit breaks loading.
+ .
+ B5 loads the logging subsystem and the persistent ID store.
+ B6 loads the logging subsystem and the session layer only.
+ .
+ Each probe appends one line to its marker file under slash tmp.
