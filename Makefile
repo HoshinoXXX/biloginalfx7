@@ -1,23 +1,16 @@
-# BiloginalfX7 —— 哔哩哔哩 4.34 复活插件
+# BiloginalfX7 —— 阶梯式二分探针
 #
-# 编译：make package
+# 一次编译产出 4 个复杂度递增的 dylib，全部挂同一个 filter（tv.danmaku.bilianime）：
 #
-# ── 关于 SDK 与架构（两个必须写死的点）────────────────────────────
-# 1) TARGET 里的 SDK 版本必须显式指定，不能用 latest：
-#    iOS 11 起苹果移除了 32 位支持，iPhoneOS11.4 及之后的 SDK 里所有框架
-#    都只有 arm64 切片。用 latest（=16.5）链 armv7 时，连 _objc_msgSend /
-#    ___CFConstantStringClassReference 这类系统符号都会报
-#    "symbol(s) not found for architecture armv7"。
-#    9.3 是社区仓库里最后一个完整带 armv7（同时也有 arm64）的 SDK。
+#   B1Probe  只写文件                          ← 最小可加载单元
+#   B2Probe  + BRLog                           ← 加日志系统
+#   B3Probe  + BRStore + BRSession             ← 加数据层
+#   B4Probe  完整（+ BRRouter/BRURLProtocol）   ← 加协议层，并额外链接 UIKit/Security
 #
-# 2) iOS 9.3 SDK 里的模块映射用的是旧名字 module.map，新版 clang 把它当成
-#    默认错误（-Werror,-Wdeprecated-module-dot-map），必须关掉。
+# 每个探针加载后都会往 /tmp/bN.txt 写一行。哪个先不写，就是哪一层的问题。
 #
-# 3) 本版只编 armv7：9.3 / 10.3 的 .tbd 都是 2016 年的旧格式，新 ld 认为
-#    「在为 iOS 构建，却链接了为 iOS 模拟器构建的库」——
-#    编 armv7 时这只是警告（能过），编 arm64 时变成错误（失败）。
-#    arm64 需要另用新 SDK 单独产出后 lipo 合并，留待后续版本。
-# ────────────────────────────────────────────────────────────────
+# 同时 B1~B3 只链 Foundation/CoreFoundation，B4 额外链 UIKit/Security ——
+# 这样也顺便验证了「多链两个框架导致加载失败」这个假设。
 
 export ARCHS = armv7
 export TARGET = iphone:clang:9.3:7.0
@@ -30,25 +23,29 @@ export ADDITIONAL_OBJCCFLAGS = -Wno-deprecated-module-dot-map
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = BiloginalfX7
+TWEAK_NAME = B1Probe B2Probe B3Probe B4Probe
 
-BiloginalfX7_FILES = Tweak.xm \
-    BRLog.m \
-    BRStore.m \
-    BRSession.m \
-    BRRouter.m \
-    BRURLProtocol.m
+B1Probe_FILES = B1Probe.xm
+B2Probe_FILES = B2Probe.xm BRLog.m
+B3Probe_FILES = B3Probe.xm BRLog.m BRStore.m BRSession.m
+B4Probe_FILES = B4Probe.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m
 
-BiloginalfX7_CFLAGS     = -fobjc-arc -Wno-deprecated-module-dot-map
-BiloginalfX7_CCFLAGS    = -Wno-deprecated-module-dot-map
-BiloginalfX7_CXXFLAGS   = -Wno-deprecated-module-dot-map
-BiloginalfX7_OBJCFLAGS  = -Wno-deprecated-module-dot-map
-BiloginalfX7_OBJCCFLAGS = -Wno-deprecated-module-dot-map
+B1Probe_CFLAGS = -fobjc-arc -Wno-deprecated-module-dot-map
+B2Probe_CFLAGS = -fobjc-arc -Wno-deprecated-module-dot-map
+B3Probe_CFLAGS = -fobjc-arc -Wno-deprecated-module-dot-map
+B4Probe_CFLAGS = -fobjc-arc -Wno-deprecated-module-dot-map
 
-BiloginalfX7_FRAMEWORKS = Foundation UIKit CoreFoundation Security
-BiloginalfX7_LDFLAGS    = -undefined dynamic_lookup
+B1Probe_FRAMEWORKS = Foundation CoreFoundation
+B2Probe_FRAMEWORKS = Foundation CoreFoundation
+B3Probe_FRAMEWORKS = Foundation CoreFoundation
+B4Probe_FRAMEWORKS = Foundation UIKit CoreFoundation Security
+
+# ★ 只有 B4 用 -undefined dynamic_lookup（因为它调用 MSHookMessageEx）；
+#   B1~B3 不调用任何 substrate 符号，可以不链接 substrate ——
+#   这样也能验证「链接 substrate 是否导致加载失败」。
+B1Probe_LDFLAGS = -undefined dynamic_lookup
+B2Probe_LDFLAGS = -undefined dynamic_lookup
+B3Probe_LDFLAGS = -undefined dynamic_lookup
+B4Probe_LDFLAGS = -undefined dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-
-after-install::
-	install.exec "killall -9 bili-universal 2>/dev/null || true"
