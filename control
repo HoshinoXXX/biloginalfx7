@@ -1,6 +1,6 @@
 Package: com.hoshinoxxx.biloginalfx7
 Name: BiloginalfX7
-Version: 6.0.0
+Version: 6.0-Alpha6.0
 Section: Tweaks
 Maintainer: HoshinoXXX
 Author: HoshinoXXX
@@ -9,30 +9,38 @@ Depends: mobilesubstrate | cydia-substrate, firmware (>= 7.0)
 Conflicts: com.jjr.bilifix7, com.hoshinoxxx.biloginalfx7probe
 Replaces: com.jjr.bilifix7
 Tag: purpose::extension, compatible_min::ios7.0
-Description: 哔哩哔哩 4.34 复活插件（iOS 7+，iPhone / iPad 通用）
- 让 2015 年的哔哩哔哩 4.34 客户端重新可用。
+Description: Revive the discontinued bilibili iOS client (BiliBili 4.34) on iOS 7 and later.
+ The app only talks to long-dead endpoints, so most pages and the player stopped working.
+ This tweak registers an NSURLProtocol - the same layer as the app's own BiliURLProtocol,
+ but matched first - and routes every legacy request to a current bilibili.com endpoint,
+ rewriting the response back into the shape the old client expects. The app's own model
+ and view code are left untouched. Four NSURLConnection entry points are hooked as a
+ fallback for traffic that bypasses the URL loading system.
  .
- 架构：注册一个 NSURLProtocol（与 App 自带的 BiliURLProtocol 同层，但优先生效），
- 把所有已失效的旧接口路由到现行接口，并把响应改写成老客户端期望的结构；
- 另外挂载 NSURLConnection 的四个入口作兜底。不改动 App 自身的 model 与 view 代码。
+ Why that layer: static analysis of the client binary (armv7 slice, symbol table not
+ stripped - 193,296 symbols / 106,838 Objective-C methods) shows the network stack is
  .
- 选择这一层的依据：对客户端二进制（armv7 切片，符号表未 strip）做静态分析后确认，
- 4.34 的网络栈是
-     业务 API → BiliApiV2/V3 → APURLConnectionOperation（AFNetworking fork）
-              → -[NSURLConnection initWithRequest:delegate:]
-              → BiliURLProtocol（App 自己注册的 NSURLProtocol）
- 也就是说 App 本身就跑在 NSURLProtocol 这一层，在这里插入可以一次覆盖全部请求。
+     business APIs -> BiliApiV2/V3 -> APURLConnectionOperation (a forked AFNetworking)
+                   -> -[NSURLConnection initWithRequest:delegate:]
+                   -> BiliURLProtocol (an NSURLProtocol subclass the app registers itself)
  .
- 主要能力：
-  * 视频详情 / 播放地址（WBI 签名 + avid/cid 自动注入）
-  * 评论 / 弹幕 / 回复
-  * 首页推荐 / 分区（一级走 UWP 通道，二级用关键词搜索模拟）
-  * 搜索（综合 / 番剧 / 影视 / UP 主），浏览器 UA 与 App UA 分别处理
-  * 番剧索引 / 详情 / 排行榜
-  * 32 位 ID 溢出修复（avid / cid / mid 虚拟化 + 双向映射持久化）
-  * 风控处理（完整浏览器指纹、buvid3+buvid4、匿名接口、限流退避）
-  * 登录态注入（改写 nav 响应，让老客户端知道已登录）
+ so the app already runs at the NSURLProtocol layer, and inserting there covers
+ everything with a single hook point.
  .
- 无任何运行时依赖，装完即用（iPhone 与 iPad 同一安装包）。
+ Covered endpoints:
+  * Video detail and playback URL (WBI signing, automatic avid/cid injection)
+  * Comments, danmaku and replies
+  * Home feed and regions (primary regions via the UWP channel, secondary regions
+    emulated by keyword search because the original service has been shut down)
+  * Search (all / bangumi / movie / uploader), with per-endpoint User-Agent handling
+  * Bangumi index, detail and ranking
+  * 32-bit ID overflow fix (avid / cid / mid virtualization with persistent maps)
+  * Risk-control handling (full browser fingerprint, buvid3 + buvid4, anonymous
+    endpoints, request throttling)
+  * Login state injection (rewrites the nav response so the old client realises it
+    is signed in)
  .
- 本包仅用于让已停止服务的旧客户端能继续访问公开内容。
+ No runtime dependencies - nothing but MobileSubstrate is required. The same package
+ works on both iPhone and iPad.
+ .
+ This package exists only so that a discontinued client can keep reaching public content.
