@@ -302,8 +302,11 @@ jobs:
           #import "BRLog.h"
           #import <stdarg.h>
 
+          // ★ 本文件在 ARC 下编译（Makefile 里有 -fobjc-arc），
+          //   所以绝对不能出现 retain / release / autorelease / dealloc 里调 [super dealloc]。
+          //   （之前写成手动引用计数，直接编译失败。）
           static BOOL gEnabled = YES;
-          static NSString *gLogPath = nil;
+          static NSString *gLogPath = nil;          // 静态变量在 ARC 下默认就是强引用
           static NSLock *gLock = nil;
           static NSMutableDictionary *gThrottle = nil;
 
@@ -354,7 +357,7 @@ jobs:
                   gLock = [[NSLock alloc] init];
                   gThrottle = [[NSMutableDictionary alloc] init];
 
-                  gLogPath = [BRLogPickPath() retain];
+                  gLogPath = BRLogPickPath();
 
                   // ★ 这一行会同时进 syslog —— 即使文件写不了，
                   //   也能从 syslog 判断插件是否加载、有没有写文件的能力。
@@ -372,7 +375,7 @@ jobs:
           void BRLogWrite(NSString *fmt, ...) {
               va_list ap;
               va_start(ap, fmt);
-              NSString *msg = [[[NSString alloc] initWithFormat:fmt arguments:ap] autorelease];
+              NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
               va_end(ap);
               if (msg == nil) return;
 
@@ -387,7 +390,7 @@ jobs:
               [gThrottle setObject:now forKey:msg];
               if ([gThrottle count] > 400) [gThrottle removeAllObjects];
 
-              NSDateFormatter *df = [[[NSDateFormatter alloc] init] autorelease];
+              NSDateFormatter *df = [[NSDateFormatter alloc] init];
               [df setDateFormat:@"MM-dd HH:mm:ss"];
               NSString *line = [NSString stringWithFormat:@"[%@] %@\n",
                                 [df stringFromDate:now], msg];
