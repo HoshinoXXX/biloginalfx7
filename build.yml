@@ -1,0 +1,99 @@
+name: Build BiloginalfX7
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 检查源文件是否齐全
+        run: |
+          set -e
+          echo "--- 仓库文件 ---"
+          ls -la
+          echo ""
+          miss=0
+          for f in Makefile control B5Probe.xm B6Probe.xm B5Probe.plist B6Probe.plist \
+                   BHelper.h BRLog.h BRLog.m BRStore.h BRStore.m BRSession.h BRSession.m; do
+            if [ ! -f "$f" ]; then
+              echo "!! 缺少 $f"
+              miss=1
+            fi
+          done
+          if [ "$miss" = "1" ]; then
+            echo "源码不齐：请把工程文件上传到仓库根目录"
+            exit 1
+          fi
+          echo "源码齐全，开始构建"
+
+      - name: 安装 Theos
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          # theos 自带一个非空的 sdks 占位目录，必须先删掉才能 clone 真正的 SDK
+          rm -rf "$THEOS/sdks"
+          git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
+          brew install ldid
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: 修补 9.3 SDK 的 liblaunch（关键）
+        run: |
+          set -e
+          SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
+          TBD="$SDK/usr/lib/system/liblaunch.tbd"
+
+          echo "--- 修补前 ---"
+          cat "$TBD" || true
+
+          # 1) 把 SDK 里所有对 liblaunch 的 re-export 引用删掉，
+          #    否则链接器会顺着 re-export 去找根本不存在的 liblaunch.dylib
+          grep -rl 'liblaunch' "$SDK" --include='*.tbd' 2>/dev/null | while read -r f; do
+            if [ "$f" != "$TBD" ]; then
+              sed -i '' '/liblaunch/d' "$f" || true
+            fi
+          done
+
+          # 2) 重写 liblaunch.tbd 为空 stub
+          #    ★ target 格式必须是 <架构>-<平台>（armv7-ios），
+          #      写成 ios-armv7 会被链接器忽略，然后回头去找真实 dylib 而失败。
+          cat > "$TBD" <<'TBDEOF'
+          --- !tapi-tbd-v2
+          archs:           [ armv7 ]
+          platform:        ios
+          targets:         [ armv7-ios ]
+          install-name:    '/usr/lib/system/liblaunch.dylib'
+          current-version: 1
+          compatibility-version: 1
+          exports:
+            - archs:   [ armv7 ]
+              symbols: [ ]
+          TBDEOF
+          # 去掉 heredoc 缩进
+          sed -i '' 's/^          //' "$TBD"
+
+          echo "--- 修补后 ---"
+          cat "$TBD"
+
+      - name: 编译打包
+        run: |
+          set -e
+          make package FINALPACKAGE=1 DEBUG=0
+
+      - name: 列出产物
+        run: |
+          ls -la packages/ || true
+
+      - name: 上传 deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: biloginalfx7-deb
+          path: packages/*.deb
+          if-no-files-found: error
