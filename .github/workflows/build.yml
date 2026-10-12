@@ -1,0 +1,66 @@
+name: Build BiloginalfX7
+
+on:
+  push:
+    branches: [ main, master ]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14
+
+    steps:
+      - name: 检出仓库
+        uses: actions/checkout@v4
+
+      - name: 检查源文件是否齐全
+        run: |
+          set -e
+          echo "--- 仓库文件 ---"
+          ls -la
+          echo ""
+          miss=0
+          for f in Makefile control B5Probe.xm B6Probe.xm B5Probe.plist B6Probe.plist \
+                   BHelper.h BRLog.h BRLog.m BRStore.h BRStore.m BRSession.h BRSession.m; do
+            if [ ! -f "$f" ]; then
+              echo "!! 缺少 $f"
+              miss=1
+            fi
+          done
+          if [ "$miss" = "1" ]; then
+            echo "源码不齐：请把工程文件上传到仓库根目录"
+            exit 1
+          fi
+          echo "源码齐全，开始构建"
+
+      - name: 安装 Theos
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
+          brew install ldid
+          # 9.3 SDK 的 liblaunch.tbd 里有个 re-export 指向不存在的路径，
+          # 新版 ld 会因此报 file not found —— 把它替换成空 stub
+          TBD="$THEOS/sdks/iPhoneOS9.3.sdk/usr/lib/system/liblaunch.tbd"
+          if [ -f "$TBD" ]; then
+            sed -i '' '/^reexported-libraries:/,/^[a-z]/d' "$TBD" || true
+            printf '--- !tapi-tbd-v2\narchs: [ armv7 ]\ntbd-version: 2\ntargets: [ ios-armv7 ]\ninstall-name: /usr/lib/system/liblaunch.dylib\n' > "$TBD"
+          fi
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: 编译打包
+        run: |
+          set -e
+          make package FINALPACKAGE=1 DEBUG=0
+
+      - name: 列出产物
+        run: |
+          ls -la packages/ || true
+
+      - name: 上传 deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: biloginalfx7-deb
+          path: packages/*.deb
+          if-no-files-found: error
