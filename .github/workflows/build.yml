@@ -1,17 +1,18 @@
 name: Build Probe
 
-# 单文件版（v7）：本文件已内联全部源码，运行时会自动展开并编译。
+# 单文件版（v8）：本文件已内联全部源码，运行时会自动展开并编译。
 #
-# 五轮踩坑记录（前四个已修，第五个是本版重点）：
-#   1) ldid 在 Ubuntu 源里不存在              -> 改用 macOS runner
-#   2) theos-action 内部路径写错              -> 不使用它，手写安装
-#   3) Linux 缺交叉编译工具链                 -> 改用 macOS runner
-#   4) TARGET=latest 用的是 16.5 SDK，
-#      而 iOS 11 起没有 32 位 -> armv7 链接时
-#      连系统符号都找不到                      -> 固定 TARGET = 9.3
-#   5) 9.3 SDK 里用的是旧式 module.map，
-#      新版 clang 把这个当 default-error       -> 关闭该诊断
-#      （并保留一次 -fno-modules 的自动重试兜底）
+# 六轮踩坑记录（前五个已修，第六个是本版重点）：
+#   1) ldid 在 Ubuntu 源里不存在            -> 改用 macOS runner
+#   2) theos-action 内部路径写错            -> 不使用它，手写安装
+#   3) Linux 缺交叉编译工具链               -> 改用 macOS runner
+#   4) TARGET=latest 用 16.5 SDK（无 32 位）-> 固定用 9.3
+#   5) 9.3 SDK 用旧式 module.map，
+#      新版 clang 当 default-error          -> -Wno-deprecated-module-dot-map
+#   6) 9.3 SDK 的 libSystem.tbd 里 re-export 了
+#      /usr/lib/system/liblaunch.dylib，
+#      但该 SDK 里没有对应的 .tbd 文件
+#      -> ld: file not found (armv7)        -> 删掉该行 + 造 stub 顶上
 on:
   push:
   workflow_dispatch:
@@ -373,22 +374,12 @@ jobs:
 
           echo "--- 生成的文件 ---"
           find src -type f | sort
-          echo "--- Makefile 关键配置 ---"
-          grep -E "^export|^BiloginalfX7Probe_" src/Makefile
-
-      - name: 环境信息
-        run: |
-          echo "--- Xcode ---"
-          xcodebuild -version || true
-          echo "--- clang ---"
-          clang --version | head -3
 
       - name: 安装 theos
         run: |
           set -e
           git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
           echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
-          ls -la "$HOME/theos" | head -20
 
       - name: 安装 iOS SDK
         run: |
@@ -402,48 +393,74 @@ jobs:
               done
           echo "--- 可用 SDK ---"
           ls -1 "$HOME/theos/sdks"
-          if [ ! -d "$HOME/theos/sdks/iPhoneOS9.3.sdk" ]; then
-            echo "!! 缺少 iPhoneOS9.3.sdk（armv7 必须用它）"
-            exit 1
-          fi
-          echo "--- 确认 9.3 SDK 存在（armv7 切片由它提供）---"
-          ls "$HOME/theos/sdks/iPhoneOS9.3.sdk/usr/lib/" | head -10
+
+      - name: 修复旧 SDK 的 liblaunch 缺失问题
+        run: |
+          set +e
+          # 背景：iOS 9.3 的 libSystem.tbd 里 re-export /usr/lib/system/liblaunch.dylib，
+          # 但那个年代 liblaunch 还是真实 dylib，SDK 里没有对应 .tbd；
+          # 新版 ld 会去解析并报 "file not found for architecture armv7"。
+          # 处理：从相关 tbd 里删掉该 re-export 行，并造一个极简 stub 顶上。
+          for V in 9.3 10.3 11.4 12.4; do
+            SDK="$HOME/theos/sdks/iPhoneOS${V}.sdk"
+            [ -d "$SDK" ] || continue
+            echo "--- 处理 SDK $V ---"
+            for f in "$SDK/usr/lib/system/libSystem.tbd" \
+                     "$SDK/usr/lib/libSystem.tbd" \
+                     "$SDK/usr/lib/system/libSystem.B.tbd"; do
+              if [ -f "$f" ]; then
+                grep -n "liblaunch" "$f" 2>/dev/null && echo "   ^ 发现 liblaunch 引用，删除该行"
+                # 删掉含 liblaunch.dylib 的行（BSD sed）
+                sed -i '' '/liblaunch\.dylib/d' "$f" 2>/dev/null || true
+              fi
+            done
+            # 造一个空 stub（即使某处仍引用它，也能被满足）
+            # 注意：这里用 printf 而不是 heredoc —— heredoc 的内容行无法缩进，
+            # 会破坏 YAML 的块标量缩进，导致整个 workflow 解析失败。
+            STUB="$SDK/usr/lib/system/liblaunch.tbd"
+            if [ ! -f "$STUB" ]; then
+              printf '%s\n' \
+                '--- !tapi-tbd-v3' \
+                'archs:                 [ armv7, armv7s, arm64 ]' \
+                'platform:              ios' \
+                'install-name:          /usr/lib/system/liblaunch.dylib' \
+                'current-version:       1' \
+                'compatibility-version: 1' \
+                'exports:' \
+                '  - archs:             [ armv7, armv7s, arm64 ]' \
+                '    symbols:           [ ]' \
+                '    objc-classes:      [ ]' \
+                '    objc-ivars:        [ ]' \
+                '...' > "$STUB"
+              echo "   已创建 stub: liblaunch.tbd"
+            fi
+          done
+          echo "--- 处理完成 ---"
+          exit 0
 
       - name: 安装 ldid
         run: |
           set +e
-          if ! command -v ldid >/dev/null 2>&1; then
-            brew install ldid 2>&1 | tail -5
-          fi
-          command -v ldid && ldid -v 2>&1 | head -2 || echo "(ldid 不在 PATH，继续)"
+          command -v ldid >/dev/null 2>&1 || brew install ldid 2>&1 | tail -3
+          command -v ldid && ldid -v 2>&1 | head -2 || echo "(ldid 不在 PATH)"
           exit 0
 
       - name: 编译
         run: |
           cd src
-          echo "########## 第一次尝试（已关闭 module.map 诊断）##########"
-          set -o pipefail
-          if make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -120; then
-            echo "第一次成功"
-            exit 0
-          fi
-
-          echo ""
-          echo "########## 第一次失败，改用 -fno-modules 重试 ##########"
-          make clean 2>/dev/null || true
-          if make package FINALPACKAGE=1 DEBUG=0 \
-               ADDITIONAL_CFLAGS="-fno-modules" \
-               ADDITIONAL_OBJCFLAGS="-fno-modules" \
-               ADDITIONAL_OBJCCFLAGS="-fno-modules" \
-               ADDITIONAL_CXXFLAGS="-fno-modules" \
-               ADDITIONAL_CCFLAGS="-fno-modules" \
-               2>&1 | tail -120; then
-            echo "重试成功（说明问题是模块映射，已用 -fno-modules 绕开）"
-            exit 0
-          fi
-
-          echo ""
-          echo "########## 两种方式都失败 ##########"
+          # 依次尝试几个仍带 armv7 的 SDK（9.3 / 10.3），谁先成功就用谁
+          for V in 9.3 10.3; do
+            echo ""
+            echo "################## 尝试 SDK $V ##################"
+            set -o pipefail
+            if make package FINALPACKAGE=1 DEBUG=0 TARGET=iphone:clang:${V}:7.0 2>&1 | tail -80; then
+              echo "################## SDK $V 编译成功 ##################"
+              exit 0
+            fi
+            echo "################## SDK $V 失败，清理后重试 ##################"
+            make clean 2>/dev/null || true
+          done
+          echo "################## 所有 SDK 都失败 ##################"
           exit 1
 
       - name: 收集产物
@@ -452,14 +469,8 @@ jobs:
           find src/packages -name "*.deb" -exec cp {} out/ \; 2>/dev/null || true
           if [ -z "$(ls -A out 2>/dev/null)" ]; then
             echo "=== 没有产出 deb，诊断信息如下 ==="
-            echo "--- src/packages ---"
-            ls -laR src/packages 2>/dev/null || echo "(不存在)"
-            echo "--- src/.theos/obj ---"
-            ls -laR src/.theos/obj 2>/dev/null | head -60 || echo "(不存在)"
-            echo "--- 用到的 SDK ---"
-            ls -1 "$HOME/theos/sdks" 2>/dev/null | head -20 || echo "(无)"
-            echo "--- ldid ---"
-            which ldid || echo "(找不到 ldid)"
+            ls -laR src/packages 2>/dev/null || echo "(packages 不存在)"
+            ls -laR src/.theos/obj 2>/dev/null | head -40 || true
             exit 1
           fi
           ls -la out/
