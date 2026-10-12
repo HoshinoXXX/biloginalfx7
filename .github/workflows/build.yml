@@ -305,25 +305,64 @@ jobs:
           static BOOL gEnabled = YES;
           static NSString *gLogPath = nil;
           static NSLock *gLock = nil;
-          // 高频日志限流：同一行内容 30 秒内只记一次
           static NSMutableDictionary *gThrottle = nil;
+
+          // 确保目录存在并可写；返回 YES 表示可用
+          static BOOL BREnsureDir(NSString *d) {
+              NSFileManager *fm = [NSFileManager defaultManager];
+              BOOL isDir = NO;
+              if (![fm fileExistsAtPath:d isDirectory:&isDir] || !isDir) {
+                  [fm createDirectoryAtPath:d
+                withIntermediateDirectories:YES
+                                 attributes:nil
+                                      error:NULL];
+              }
+              return [fm isWritableFileAtPath:d];
+          }
+
+          // ★ 日志路径三级降级。
+          //   背景：哔哩哔哩是**沙盒进程**，从它内部往 /var/mobile 写文件很可能被
+          //   沙盒拒绝。所以不能假定共享目录可写，必须实际探测，并且一定要有一个
+          //   「沙盒内」的兜底路径 —— App 自己的容器（NSHomeDirectory）必定可写。
+          static NSString *BRLogPickPath(void) {
+              // ① 越狱共享目录（最方便 cat 查看）
+              NSArray *shared = [NSArray arrayWithObjects:
+                                 @"/var/mobile/bilifix",
+                                 @"/tmp", nil];
+              for (NSString *d in shared) {
+                  if (BREnsureDir(d)) {
+                      return [d stringByAppendingPathComponent:@"probe.log"];
+                  }
+              }
+
+              // ② 沙盒内兜底：App 自己的 Documents 目录
+              NSString *home = NSHomeDirectory();
+              if (home != nil && [home length] > 0) {
+                  NSString *docs = [home stringByAppendingPathComponent:@"Documents"];
+                  if (BREnsureDir(docs)) {
+                      return [docs stringByAppendingPathComponent:@"bilifix-probe.log"];
+                  }
+              }
+
+              // ③ 都不行 → 只走 NSLog
+              return nil;
+          }
 
           void BRLogInit(void) {
               static dispatch_once_t once;
               dispatch_once(&once, ^{
                   gLock = [[NSLock alloc] init];
-                  gThrottle = [NSMutableDictionary dictionary];
-                  // 越狱环境可直接写；不可写时退化为 NSLog
-                  for (NSString *p in @[@"/var/mobile/biloginalfx7.log",
-                                        @"/tmp/biloginalfx7.log"]) {
-                      if ([[NSFileManager defaultManager] isWritableFileAtPath:
-                           [p stringByDeletingLastPathComponent]]) {
-                          gLogPath = p;
-                          break;
-                      }
-                  }
-                  if (gLogPath == nil) {
-                      gEnabled = NO;   // 只走 NSLog
+                  gThrottle = [[NSMutableDictionary alloc] init];
+
+                  gLogPath = [BRLogPickPath() retain];
+
+                  // ★ 这一行会同时进 syslog —— 即使文件写不了，
+                  //   也能从 syslog 判断插件是否加载、有没有写文件的能力。
+                  if (gLogPath != nil) {
+                      NSLog(@"[BiloginalfX7Probe] 日志文件: %@", gLogPath);
+                  } else {
+                      NSLog(@"[BiloginalfX7Probe] 无法写日志文件（沙盒限制），仅使用 NSLog");
+                      gEnabled = NO;
                   }
               });
           }
@@ -333,7 +372,7 @@ jobs:
           void BRLogWrite(NSString *fmt, ...) {
               va_list ap;
               va_start(ap, fmt);
-              NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+              NSString *msg = [[[NSString alloc] initWithFormat:fmt arguments:ap] autorelease];
               va_end(ap);
               if (msg == nil) return;
 
@@ -348,12 +387,13 @@ jobs:
               [gThrottle setObject:now forKey:msg];
               if ([gThrottle count] > 400) [gThrottle removeAllObjects];
 
-              NSDateFormatter *df = [[NSDateFormatter alloc] init];
+              NSDateFormatter *df = [[[NSDateFormatter alloc] init] autorelease];
               [df setDateFormat:@"MM-dd HH:mm:ss"];
               NSString *line = [NSString stringWithFormat:@"[%@] %@\n",
                                 [df stringFromDate:now], msg];
               [gLock unlock];
 
+              // NSLog 始终输出（进 syslog），不受沙盒影响
               NSLog(@"[BiloginalfX7] %@", msg);
 
               if (gLogPath != nil) {
