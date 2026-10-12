@@ -1,0 +1,38 @@
+Package: com.hoshinoxxx.biloginalfx7
+Name: BiloginalfX7
+Version: 6.0.0
+Section: Tweaks
+Maintainer: HoshinoXXX
+Author: HoshinoXXX
+Architecture: iphoneos-arm
+Depends: mobilesubstrate | cydia-substrate, firmware (>= 7.0)
+Conflicts: com.jjr.bilifix7, com.hoshinoxxx.biloginalfx7probe
+Replaces: com.jjr.bilifix7
+Tag: purpose::extension, compatible_min::ios7.0
+Description: 哔哩哔哩 4.34 复活插件（iOS 7+，iPhone / iPad 通用）
+ 让 2015 年的哔哩哔哩 4.34 客户端重新可用。
+ .
+ 架构：注册一个 NSURLProtocol（与 App 自带的 BiliURLProtocol 同层，但优先生效），
+ 把所有已失效的旧接口路由到现行接口，并把响应改写成老客户端期望的结构；
+ 另外挂载 NSURLConnection 的四个入口作兜底。不改动 App 自身的 model 与 view 代码。
+ .
+ 选择这一层的依据：对客户端二进制（armv7 切片，符号表未 strip）做静态分析后确认，
+ 4.34 的网络栈是
+     业务 API → BiliApiV2/V3 → APURLConnectionOperation（AFNetworking fork）
+              → -[NSURLConnection initWithRequest:delegate:]
+              → BiliURLProtocol（App 自己注册的 NSURLProtocol）
+ 也就是说 App 本身就跑在 NSURLProtocol 这一层，在这里插入可以一次覆盖全部请求。
+ .
+ 主要能力：
+  * 视频详情 / 播放地址（WBI 签名 + avid/cid 自动注入）
+  * 评论 / 弹幕 / 回复
+  * 首页推荐 / 分区（一级走 UWP 通道，二级用关键词搜索模拟）
+  * 搜索（综合 / 番剧 / 影视 / UP 主），浏览器 UA 与 App UA 分别处理
+  * 番剧索引 / 详情 / 排行榜
+  * 32 位 ID 溢出修复（avid / cid / mid 虚拟化 + 双向映射持久化）
+  * 风控处理（完整浏览器指纹、buvid3+buvid4、匿名接口、限流退避）
+  * 登录态注入（改写 nav 响应，让老客户端知道已登录）
+ .
+ 无任何运行时依赖，装完即用（iPhone 与 iPad 同一安装包）。
+ .
+ 本包仅用于让已停止服务的旧客户端能继续访问公开内容。
