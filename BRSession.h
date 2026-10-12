@@ -12,7 +12,7 @@
 
 @interface BRSession : NSObject
 
-+ (void)load;
++ (void)bootstrap;  // ★ 同 BRStore：不用 +load，避免 dyld 初始化期抛异常
 + (void)warmUp;          // 异步预热 buvid / wbi 密钥
 
 // ---- 身份 ----

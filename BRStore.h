@@ -23,7 +23,9 @@
 
 @interface BRStore : NSObject
 
-+ (void)load;
++ (void)bootstrap;   // ★ 原来叫 +load —— +load 在 dyld 初始化最早期执行，
+                     //   一旦抛异常会导致整个 dlopen 失败（dylib 被卸载）。
+                     //   改成由 %ctor 显式调用，并用 @try/@catch 兜住。
 + (void)flush;
 
 // ---- aid ----

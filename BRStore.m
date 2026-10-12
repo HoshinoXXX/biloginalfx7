@@ -86,7 +86,7 @@ static void BRSaveMap(NSString *file, NSMutableDictionary *fakeByReal) {
 
 @implementation BRStore
 
-+ (void)load {
++ (void)bootstrap {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         gLock = [[NSLock alloc] init];

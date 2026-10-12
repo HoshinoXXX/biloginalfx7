@@ -1,30 +1,24 @@
 //
-//  Tweak.xm —— BiloginalfX7
+//  Tweak.xm —— BiloginalfX7  Alpha6.1（里程碑诊断版）
 //
-//  哔哩哔哩 4.34（iOS 7+，iPhone / iPad 通用）复活插件
+//  ── 为什么要有里程碑 ──────────────────────────────────────────
+//  实测发现本 dylib 会被 dyld **加载后立即卸载**：
+//      dyld: loaded:   .../BiloginalfX7.dylib
+//      dyld: unloaded: .../BiloginalfX7.dylib
+//  且紧接着 SubstrateLoader 调用了 dlerror() —— 说明 dlopen 返回 NULL。
+//  符号绑定全部成功，所以只能是「初始化器执行时抛了异常」。
 //
-//  ============================ 架构 ============================
-//  对 bili-universal（armv7 切片，符号表未 strip：193,296 个符号 /
-//  106,838 个方法名 / 6,012 个类）做静态分析后确认的网络栈：
+//  对策：
+//    1) 不用 +load（它在 dyld 初始化最早期跑，抛异常会让整个 dlopen 失败），
+//       改成 %ctor 里显式调用 +bootstrap
+//    2) 每个阶段都往 /tmp/br-milestone.txt 写一行 —— 走到哪一步一目了然
+//    3) 整体套 @try/@catch，异常被捕获后 dlopen 就不会失败，dylib 得以保留
+//  ─────────────────────────────────────────────────────────────
 //
-//      业务 API（535 个 BB*Api / BiliApiV2Base / BiliApiV3Base）
-//          ↓  addToQueueSync / addToQueueAsync
-//      BiliApiV2Queue（NSOperationQueue）
-//          ↓
-//      APURLConnectionOperation（B 站 fork 的 AFNetworking 1.x）
-//          ↓
-//      -[NSURLConnection initWithRequest:delegate:]        ← 主路径
-//          ↓
-//      BiliURLProtocol（App 自己 +installProtocol 注册的 NSURLProtocol 子类）
-//          ↓
-//      它内部的 NSURLSession 发出真实请求
-//
-//  也就是说 **App 本身就跑在 NSURLProtocol 这一层**。
-//  所以这里注册一个同类协议 —— 后注册的优先匹配 —— 一次性拦住所有请求，
-//  不管上层用同步、异步还是 delegate 方式发起。
-//
-//  另外还挂了 NSURLConnection 的四个入口作兜底（覆盖少数不走 URL 加载系统的路径）。
-//  ==============================================================
+//  网络栈（静态分析 bili-universal 得出，并被探针实测证实）：
+//      业务 API → BiliApiV2/V3 → APURLConnectionOperation（AFNetworking fork）
+//               → -[NSURLConnection initWithRequest:delegate:]   ← 实测走这里
+//               → BiliURLProtocol（App 自己注册的 NSURLProtocol）
 //
 
 #import <Foundation/Foundation.h>
@@ -36,19 +30,40 @@
 #import "BRSession.h"
 #import "BRURLProtocol.h"
 
+#pragma mark - 里程碑（完全独立，不依赖任何插件代码）
+
+static void BRMark(const char *tag) {
+    @try {
+        NSString *line = [NSString stringWithFormat:@"[%@] %s\n",
+                          [NSDate date], tag];
+        NSData *d = [line dataUsingEncoding:NSUTF8StringEncoding];
+        NSArray *paths = [NSArray arrayWithObjects:
+            @"/tmp/br-milestone.txt",
+            @"/var/mobile/br-milestone.txt", nil];
+        for (NSString *p in paths) {
+            NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:p];
+            if (fh != nil) {
+                [fh seekToEndOfFile];
+                [fh writeData:d];
+                [fh closeFile];
+            } else {
+                [d writeToFile:p atomically:NO];
+            }
+        }
+    } @catch (NSException *e) { }
+}
+
 #pragma mark - 兜底 hook：NSURLConnection 四个入口
 
 static NSData *(*o_sendSync)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
 static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
                           NSURLResponse **respOut, NSError **errOut) {
-    // 请求仍会经过 URL 加载系统，BRURLProtocol 会接管并改写。
-    // 这里只是把调用链记录下来，便于排查哪些接口走的是同步路径。
-    @autoreleasepool {
+    @try {
         if (BRLogEnabled()) {
             NSString *host = [[req URL] host];
             if (BRIsBiliHost(host)) BRDBG(@"[同步] %@", [[req URL] path]);
         }
-    }
+    } @catch (NSException *e) { }
     return o_sendSync(self, _cmd, req, respOut, errOut);
 }
 
@@ -56,77 +71,114 @@ static void (*o_sendAsync)(id, SEL, NSURLRequest *, NSOperationQueue *,
                            void (^)(NSURLResponse *, NSData *, NSError *));
 static void h_sendAsync(id self, SEL _cmd, NSURLRequest *req, NSOperationQueue *q,
                         void (^h)(NSURLResponse *, NSData *, NSError *)) {
-    @autoreleasepool {
+    @try {
         if (BRLogEnabled()) {
             NSString *host = [[req URL] host];
             if (BRIsBiliHost(host)) BRDBG(@"[异步] %@", [[req URL] path]);
         }
-    }
+    } @catch (NSException *e) { }
     o_sendAsync(self, _cmd, req, q, h);
 }
 
 static id (*o_initWithRequest)(id, SEL, NSURLRequest *, id);
 static id h_initWithRequest(id self, SEL _cmd, NSURLRequest *req, id delegate) {
-    // ★ 这是主路径（AFNetworking fork 全部走这里）
-    @autoreleasepool {
+    @try {
         if (BRLogEnabled()) {
             NSString *host = [[req URL] host];
             if (BRIsBiliHost(host)) BRDBG(@"[连接] %@", [[req URL] path]);
         }
-    }
+    } @catch (NSException *e) { }
     return o_initWithRequest(self, _cmd, req, delegate);
 }
 
 static id (*o_initWithRequestStart)(id, SEL, NSURLRequest *, id, BOOL);
 static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delegate,
                                  BOOL startNow) {
-    @autoreleasepool {
+    @try {
         if (BRLogEnabled()) {
             NSString *host = [[req URL] host];
             if (BRIsBiliHost(host)) BRDBG(@"[连接+] %@", [[req URL] path]);
         }
-    }
+    } @catch (NSException *e) { }
     return o_initWithRequestStart(self, _cmd, req, delegate, startNow);
 }
 
 #pragma mark - 装载
 
+// 每一步单独 try，绝不因为某一步失败而让整个初始化抛出
 %ctor
 {
     @autoreleasepool {
-        BRLogInit();
-        BRINFO(@"===== BiloginalfX7 已加载 =====");
+        NSString *bid = nil;
+        @try { bid = [[NSBundle mainBundle] bundleIdentifier]; } @catch (NSException *e) { }
+        NSString *mark = [NSString stringWithFormat:@"ctor 进入 (bid=%@)", bid ?: @"?"];
+        BRMark([mark UTF8String]);
 
-        // 1) ID 映射必须最先加载 —— 路由与响应改写都要用
-        [BRStore load];
+        // ① 日志系统
+        @try {
+            BRLogInit();
+            BRMark("01 BRLogInit 完成");
+        } @catch (NSException *e) { BRMark("01 BRLogInit 抛异常"); }
 
-        // 2) 异步预热会话（buvid3/buvid4 + wbi 密钥），不阻塞启动
-        [BRSession warmUp];
+        @try {
+            BRINFO(@"===== BiloginalfX7 Alpha6.1 已加载 (bid=%@) =====", bid);
+        } @catch (NSException *e) { }
 
-        // 3) ★ 注册自己的 NSURLProtocol
-        //    NSURLProtocol 的匹配顺序是「最后注册的最先询问」，
-        //    这里注册后我们会先于 App 的 BiliURLProtocol 拿到请求。
-        [NSURLProtocol registerClass:[BRURLProtocol class]];
-        BRINFO(@"已注册 BRURLProtocol");
+        // ② ID 映射（原来是 +load，现在显式调用）
+        @try {
+            [BRStore bootstrap];
+            BRMark("02 BRStore bootstrap 完成");
+        } @catch (NSException *e) { BRMark("02 BRStore bootstrap 抛异常"); }
 
-        // 4) 兜底 hook（NSURLConnection 四个入口）
-        Class conn = objc_getClass("NSURLConnection");
-        if (conn != nil) {
-            MSHookMessageEx(conn,
-                @selector(sendSynchronousRequest:returningResponse:error:),
-                (IMP)&h_sendSync, (IMP *)&o_sendSync);
-            MSHookMessageEx(conn,
-                @selector(sendAsynchronousRequest:queue:completionHandler:),
-                (IMP)&h_sendAsync, (IMP *)&o_sendAsync);
-            MSHookMessageEx(conn, @selector(initWithRequest:delegate:),
-                (IMP)&h_initWithRequest, (IMP *)&o_initWithRequest);
-            MSHookMessageEx(conn, @selector(initWithRequest:delegate:startImmediately:),
-                (IMP)&h_initWithRequestStart, (IMP *)&o_initWithRequestStart);
-            BRINFO(@"NSURLConnection 已挂载（4 个入口）");
-        } else {
-            BRERR(@"找不到 NSURLConnection");
+        // ③ 会话初始化与预热
+        @try {
+            [BRSession bootstrap];
+            BRMark("03 BRSession bootstrap 完成");
+        } @catch (NSException *e) { BRMark("03 BRSession bootstrap 抛异常"); }
+
+        @try {
+            [BRSession warmUp];
+            BRMark("04 BRSession warmUp 完成");
+        } @catch (NSException *e) { BRMark("04 BRSession warmUp 抛异常"); }
+
+        // ④ 注册 NSURLProtocol
+        @try {
+            Class protoCls = objc_getClass("BRURLProtocol");
+            if (protoCls != Nil) {
+                [NSURLProtocol registerClass:protoCls];
+                BRMark("05 BRURLProtocol 已注册");
+                BRINFO(@"已注册 BRURLProtocol");
+            } else {
+                BRMark("05 BRURLProtocol 类不存在");
+            }
+        } @catch (NSException *e) {
+            BRMark("05 registerClass 抛异常");
         }
 
-        BRINFO(@"初始化完成");
+        // ⑤ 兜底 hook
+        @try {
+            Class conn = objc_getClass("NSURLConnection");
+            if (conn != Nil) {
+                MSHookMessageEx(conn,
+                    @selector(sendSynchronousRequest:returningResponse:error:),
+                    (IMP)&h_sendSync, (IMP *)&o_sendSync);
+                MSHookMessageEx(conn,
+                    @selector(sendAsynchronousRequest:queue:completionHandler:),
+                    (IMP)&h_sendAsync, (IMP *)&o_sendAsync);
+                MSHookMessageEx(conn, @selector(initWithRequest:delegate:),
+                    (IMP)&h_initWithRequest, (IMP *)&o_initWithRequest);
+                MSHookMessageEx(conn, @selector(initWithRequest:delegate:startImmediately:),
+                    (IMP)&h_initWithRequestStart, (IMP *)&o_initWithRequestStart);
+                BRMark("06 NSURLConnection 4 个入口已挂载");
+                BRINFO(@"NSURLConnection 已挂载");
+            } else {
+                BRMark("06 找不到 NSURLConnection");
+            }
+        } @catch (NSException *e) {
+            BRMark("06 MSHookMessageEx 抛异常");
+        }
+
+        BRMark("07 初始化全部完成");
+        @try { BRINFO(@"初始化完成"); } @catch (NSException *e) { }
     }
 }

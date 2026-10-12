@@ -45,7 +45,7 @@ static NSString *BRWorkPath(NSString *name) {
 
 @implementation BRSession
 
-+ (void)load {
++ (void)bootstrap {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         gThrottleLock = [[NSLock alloc] init];
