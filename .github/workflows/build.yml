@@ -1,14 +1,12 @@
 name: Build Probe
 
-# 单文件版：本文件已内联全部源码，运行时会自动展开并编译。
+# 单文件版（v3）：本文件已内联全部源码，运行时会自动展开并编译。
 #
-# 依赖处理说明：
-#   以前手写 theos + SDK 的安装脚本容易踩坑（例如 ldid 在 Ubuntu 官方源里
-#   并不存在，会导致 "E: Unable to locate package ldid" 而失败）。
-#   这里改用社区维护的 theos-action，它会自动装好 theos、官方 SDK 与 ldid，
-#   并且带缓存，比手写脚本可靠得多。
-#
-#   参考：https://github.com/Randomblock1/theos-action
+# 依赖处理（踩过的两个坑）：
+#   1) ldid 在 Ubuntu 官方源里不存在 -> "E: Unable to locate package ldid"
+#      改用 MOZGIII/install-ldid-action（直接从 GitHub Releases 下载二进制）
+#   2) theos-action 内部有路径 bug -> "mv: 目标 'Theos/SDKS' 没有此文件或目录"
+#      改为手写 theos 安装，每步都显式可控
 on:
   push:
   workflow_dispatch:
@@ -326,31 +324,69 @@ jobs:
           echo "--- 生成的文件 ---"
           find src -type f | sort
 
-      - name: 准备 Theos（自动装 theos + 官方 SDK + ldid）
-        uses: Randomblock1/theos-action@main
+      - name: 基础工具
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y --no-install-recommends \
+            curl git make clang xz-utils zip unzip fakeroot dpkg-dev perl
+
+      - name: 安装 ldid
+        uses: MOZGIII/install-ldid-action@v1
         with:
-          theos-dir: theos
+          tag: v2.1.5-procursus2
+
+      - name: 确认 ldid 可用
+        run: ldid -v || ldid || echo "(ldid 已就位)"
+
+      - name: 安装 theos
+        run: |
+          set -e
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          echo "--- theos 目录 ---"
+          ls -la "$HOME/theos" | head -20
+
+      - name: 安装 iOS SDK
+        run: |
+          set -e
+          mkdir -p "$HOME/theos/sdks"
+          cd /tmp
+          git clone --depth 1 https://github.com/theos/sdks.git sdkrepo
+          # 官方仓库里是一些 .sdk 目录；全部拷过去
+          find /tmp/sdkrepo -maxdepth 2 -name "*.sdk" -type d -print0 \
+            | while IFS= read -r -d '' d; do
+                cp -R "$d" "$HOME/theos/sdks/" 2>/dev/null || true
+              done
+          echo "--- 可用 SDK ---"
+          ls -1 "$HOME/theos/sdks" | head -30
+          if [ -z "$(ls -A "$HOME/theos/sdks")" ]; then
+            echo "!! SDK 目录为空，编译会失败"
+            echo "--- sdkrepo 内容 ---"
+            find /tmp/sdkrepo -maxdepth 2 | head -40
+            exit 1
+          fi
 
       - name: 编译
         run: |
-          set -e
           cd src
-          make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -80
+          make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -100
 
       - name: 收集产物
         run: |
           mkdir -p out
           find src/packages -name "*.deb" -exec cp {} out/ \; 2>/dev/null || true
           if [ -z "$(ls -A out 2>/dev/null)" ]; then
-            echo "=== 没有产出 deb；下面是诊断信息 ==="
-            echo "--- packages 目录 ---"
+            echo "=== 没有产出 deb，诊断信息如下 ==="
+            echo "--- src/packages ---"
             ls -laR src/packages 2>/dev/null || echo "(不存在)"
-            echo "--- .theos 目录 ---"
+            echo "--- src/.theos ---"
             ls -laR src/.theos 2>/dev/null | head -60 || echo "(不存在)"
-            echo "--- theos 是否就绪 ---"
-            ls -la theos/bin 2>/dev/null || echo "(theos/bin 不存在)"
-            echo "--- 可用 SDK ---"
-            ls -1 theos/sdks 2>/dev/null || echo "(无)"
+            echo "--- theos 根 ---"
+            ls -la "$HOME/theos" 2>/dev/null | head -20 || echo "(不存在)"
+            echo "--- SDK ---"
+            ls -1 "$HOME/theos/sdks" 2>/dev/null || echo "(无)"
+            echo "--- which ldid ---"
+            which ldid || echo "(找不到 ldid)"
             exit 1
           fi
           ls -la out/
