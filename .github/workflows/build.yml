@@ -1,0 +1,439 @@
+name: Build Probe
+
+# 单文件版（v6）：本文件已内联全部源码，运行时会自动展开并编译。
+#
+# 四轮踩坑记录（都已修）：
+#   1) ldid 在 Ubuntu 源里不存在        -> 改用 macOS runner（自带 Xcode）
+#   2) theos-action 内部路径写错        -> 不使用它，手写安装
+#   3) Linux 缺交叉编译工具链           -> 改用 macOS runner 解决
+#   4) TARGET 用 latest 导致 SDK 是 16.5
+#      -> iOS 11 起没有 32 位，armv7 一个系统符号都找不到
+#      -> 显式指定 TARGET = iphone:clang:9.3:7.0（9.3 仍带 armv7 + arm64）
+on:
+  push:
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-latest
+    steps:
+      - name: 展开内联源码
+        run: |
+          set -e
+          mkdir -p "$(dirname 'src/Tweak.xm')"
+          cat > 'src/Tweak.xm' << 'BILIFIX_EOF_MARKER_7f3a'
+          //
+          //  Tweak.xm —— BiloginalfX7 探针（Probe）
+          //
+          //  ★ 目的：先搞清楚 4.34 到底走哪个网络入口，再决定架构。
+          //
+          //  背景：此前的 4.34 插件（BiliFix7.dylib）只 hook 了
+          //        +sendSynchronousRequest:returningResponse:error:
+          //        +sendAsynchronousRequest:queue:completionHandler:
+          //  但如果客户端实际用的是 delegate 方式（-initWithRequest:delegate:），
+          //  那两个 hook 就是**完全无效**的 —— 插件看起来装了，实际一点作用没有。
+          //
+          //  所以这里把**所有可能的出口**都挂上探针，每个只记录一行日志、
+          //  **不改变任何行为**。装上看日志即可判断：
+          //    · 哪个入口有输出  ->  4.34 用的是它
+          //    · 全都没有输出    ->  走的是更底层（CFNetwork C API / 自研库），
+          //                          那就只能继续用本地代理方案
+          //
+          //  日志：/var/mobile/biloginalfx7.log（或 Console.app 过滤 BiloginalfX7）
+          //
+
+          #import <Foundation/Foundation.h>
+          #import <objc/runtime.h>
+          #import <substrate.h>
+          #import <CFNetwork/CFNetwork.h>
+
+          #import "Core/BRLog.h"
+
+          static NSMutableSet *gSeen = nil;
+
+          static void BRNote(NSString *tag, NSURL *url) {
+              static dispatch_once_t once;
+              dispatch_once(&once, ^{ gSeen = [NSMutableSet set]; });
+              NSString *u = url.absoluteString ?: @"(nil)";
+              // 同一 URL 只记一次，避免刷屏
+              NSString *key = [NSString stringWithFormat:@"%@|%@", tag, u];
+              if ([gSeen containsObject:key]) return;
+              [gSeen addObject:key];
+              if ([gSeen count] > 800) [gSeen removeAllObjects];
+              BRLogWrite(@"[探针] %@  %@", tag, u);
+          }
+
+          #pragma mark - NSURLConnection：类方法
+
+          static NSData *(*o_sendSync)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
+          static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
+                                    NSURLResponse **resp, NSError **err) {
+              BRNote(@"+sendSynchronousRequest", req.URL);
+              return o_sendSync(self, _cmd, req, resp, err);
+          }
+
+          static void (*o_sendAsync)(id, SEL, NSURLRequest *, NSOperationQueue *,
+                                     void (^)(NSURLResponse *, NSData *, NSError *));
+          static void h_sendAsync(id self, SEL _cmd, NSURLRequest *req, NSOperationQueue *q,
+                                  void (^h)(NSURLResponse *, NSData *, NSError *)) {
+              BRNote(@"+sendAsynchronousRequest", req.URL);
+              o_sendAsync(self, _cmd, req, q, h);
+          }
+
+          #pragma mark - NSURLConnection：实例方法（delegate 方式）
+
+          static id (*o_initWithRequest)(id, SEL, NSURLRequest *, id);
+          static id h_initWithRequest(id self, SEL _cmd, NSURLRequest *req, id delegate) {
+              BRNote(@"-initWithRequest:delegate:", req.URL);
+              return o_initWithRequest(self, _cmd, req, delegate);
+          }
+
+          static id (*o_initWithRequestStart)(id, SEL, NSURLRequest *, id, BOOL);
+          static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delegate,
+                                           BOOL startNow) {
+              BRNote(@"-initWithRequest:delegate:startImmediately:", req.URL);
+              return o_initWithRequestStart(self, _cmd, req, delegate, startNow);
+          }
+
+          static void (*o_start)(id, SEL);
+          static void h_start(id self, SEL _cmd) {
+              @try {
+                  NSURLRequest *req = [self valueForKey:@"originalRequest"];
+                  if (req == nil) req = [self valueForKey:@"_originalRequest"];
+                  if (req != nil) BRNote(@"-start", req.URL);
+              } @catch (NSException *e) { }
+              o_start(self, _cmd);
+          }
+
+          #pragma mark - NSURLSession
+
+          static id (*o_dataTaskWithRequest)(id, SEL, NSURLRequest *);
+          static id h_dataTaskWithRequest(id self, SEL _cmd, NSURLRequest *req) {
+              BRNote(@"NSURLSession -dataTaskWithRequest:", req.URL);
+              return o_dataTaskWithRequest(self, _cmd, req);
+          }
+
+          static id (*o_dataTaskWithRequestCompletion)(id, SEL, NSURLRequest *,
+                                                       void (^)(NSData *, NSURLResponse *, NSError *));
+          static id h_dataTaskWithRequestCompletion(id self, SEL _cmd, NSURLRequest *req,
+                                                    void (^cb)(NSData *, NSURLResponse *, NSError *)) {
+              BRNote(@"NSURLSession -dataTaskWithRequest:completionHandler:", req.URL);
+              return o_dataTaskWithRequestCompletion(self, _cmd, req, cb);
+          }
+
+          #pragma mark - CFNetwork（C API，最底层兜底）
+
+          static CFReadStreamRef (*o_cfReadStream)(CFAllocatorRef, CFHTTPMessageRef);
+          static CFReadStreamRef h_cfReadStream(CFAllocatorRef alloc, CFHTTPMessageRef msg) {
+              @try {
+                  NSURL *u = (__bridge NSURL *)CFHTTPMessageCopyRequestURL(msg);
+                  if (u != nil) BRNote(@"CFReadStreamCreateForHTTPRequest", u);
+              } @catch (NSException *e) { }
+              return o_cfReadStream(alloc, msg);
+          }
+
+          static CFReadStreamRef (*o_cfReadStreamForStream)(CFAllocatorRef, CFReadStreamRef);
+          static CFReadStreamRef h_cfReadStreamForStream(CFAllocatorRef alloc, CFReadStreamRef s) {
+              BRNote(@"CFReadStreamCreateForStreamedHTTPRequest", nil);
+              return o_cfReadStreamForStream(alloc, s);
+          }
+
+          #pragma mark - 装载
+
+          %ctor
+          {
+              @autoreleasepool {
+                  BRLogInit();
+                  BRLogWrite(@"===== BiloginalfX7 探针已加载 =====");
+
+                  Class conn = objc_getClass("NSURLConnection");
+                  if (conn != nil) {
+                      MSHookMessageEx(conn, @selector(sendSynchronousRequest:returningResponse:error:),
+                                      (IMP)&h_sendSync, (IMP *)&o_sendSync);
+                      MSHookMessageEx(conn, @selector(sendAsynchronousRequest:queue:completionHandler:),
+                                      (IMP)&h_sendAsync, (IMP *)&o_sendAsync);
+                      MSHookMessageEx(conn, @selector(initWithRequest:delegate:),
+                                      (IMP)&h_initWithRequest, (IMP *)&o_initWithRequest);
+                      MSHookMessageEx(conn, @selector(initWithRequest:delegate:startImmediately:),
+                                      (IMP)&h_initWithRequestStart, (IMP *)&o_initWithRequestStart);
+                      MSHookMessageEx(conn, @selector(start), (IMP)&h_start, (IMP *)&o_start);
+                      BRLogWrite(@"[探针] NSURLConnection 已挂载（5 个入口）");
+                  }
+
+                  Class sess = objc_getClass("NSURLSession");
+                  if (sess != nil) {
+                      MSHookMessageEx(sess, @selector(dataTaskWithRequest:),
+                                      (IMP)&h_dataTaskWithRequest, (IMP *)&o_dataTaskWithRequest);
+                      MSHookMessageEx(sess, @selector(dataTaskWithRequest:completionHandler:),
+                                      (IMP)&h_dataTaskWithRequestCompletion,
+                                      (IMP *)&o_dataTaskWithRequestCompletion);
+                      BRLogWrite(@"[探针] NSURLSession 已挂载");
+                  }
+
+                  MSHookFunction((void *)CFReadStreamCreateForHTTPRequest,
+                                 (void *)h_cfReadStream, (void **)&o_cfReadStream);
+                  MSHookFunction((void *)CFReadStreamCreateForStreamedHTTPRequest,
+                                 (void *)h_cfReadStreamForStream, (void **)&o_cfReadStreamForStream);
+                  BRLogWrite(@"[探针] CFNetwork 已挂载");
+
+                  BRLogWrite(@"[探针] 安装完成 —— 现在打开哔哩哔哩，操作几下，然后查看日志");
+              }
+          }
+          BILIFIX_EOF_MARKER_7f3a
+          mkdir -p "$(dirname 'src/Makefile')"
+          cat > 'src/Makefile' << 'BILIFIX_EOF_MARKER_7f3a'
+          # BiloginalfX7 探针 —— 只挂载探针、不改变任何网络行为
+          #
+          # 编译：make package
+          #
+          # ★ TARGET 里的 SDK 版本必须显式指定，不能用 latest：
+          #   iOS 11 起苹果彻底移除了 32 位支持，iPhoneOS11.4 及之后的 SDK 里
+          #   所有框架都只有 arm64 切片。用 latest（=16.5）链 armv7 时，
+          #   连 _objc_msgSend / ___CFConstantStringClassReference 这种系统符号
+          #   都会报 "symbol(s) not found for architecture armv7"。
+          #   9.3 是社区仓库里最后一个完整带 armv7 的 SDK（同时也有 arm64）。
+          #
+          export ARCHS = armv7 arm64
+          export TARGET = iphone:clang:9.3:7.0
+
+          include $(THEOS)/makefiles/common.mk
+
+          TWEAK_NAME = BiloginalfX7Probe
+          BiloginalfX7Probe_FILES = Tweak.xm Core/BRLog.m
+          BiloginalfX7Probe_CFLAGS = -fobjc-arc
+          # 探针只用到 Foundation / CoreFoundation（不要 UIKit，减少链接面）
+          BiloginalfX7Probe_FRAMEWORKS = Foundation CoreFoundation
+          # tweak 的符号在运行时由宿主进程解析
+          BiloginalfX7Probe_LDFLAGS = -undefined dynamic_lookup
+
+          include $(THEOS_MAKE_PATH)/tweak.mk
+          BILIFIX_EOF_MARKER_7f3a
+          mkdir -p "$(dirname 'src/control')"
+          cat > 'src/control' << 'BILIFIX_EOF_MARKER_7f3a'
+          Package: com.hoshinoxxx.biloginalfx7probe
+          Name: BiloginalfX7 探针
+          Version: 0.1.0
+          Section: Tweaks
+          Maintainer: HoshinoXXX
+          Author: HoshinoXXX
+          Architecture: iphoneos-arm
+          Depends: mobilesubstrate | cydia-substrate, firmware (>= 7.0)
+          Tag: purpose::extension
+          Description: 哔哩哔哩 4.34 网络入口探针（诊断用，不改变任何行为）
+           只挂载以下网络出口的探针，每个仅记录一行日志：
+            * NSURLConnection 类方法（sendSynchronousRequest / sendAsynchronousRequest）
+            * NSURLConnection 实例方法（initWithRequest:delegate: / -start）
+            * NSURLSession（dataTaskWithRequest: / ...completionHandler:）
+            * CFNetwork C API（CFReadStreamCreateForHTTPRequest / ...ForStreamedHTTPRequest）
+           .
+           用途：确定 4.34 实际走哪个网络入口，以决定插件架构。
+           日志：/var/mobile/biloginalfx7.log
+          BILIFIX_EOF_MARKER_7f3a
+          mkdir -p "$(dirname 'src/BiloginalfX7Probe.plist')"
+          cat > 'src/BiloginalfX7Probe.plist' << 'BILIFIX_EOF_MARKER_7f3a'
+          {
+              Filter = {
+                  Bundles = (
+                      "tv.danmaku.bilianime",
+                      "tv.danmaku.bilianimeHD",
+                      "tv.danmaku.bilibiliHD",
+                      "com.bilibili.bilianime"
+                  );
+              };
+          }
+          BILIFIX_EOF_MARKER_7f3a
+          mkdir -p "$(dirname 'src/Core/BRLog.h')"
+          cat > 'src/Core/BRLog.h' << 'BILIFIX_EOF_MARKER_7f3a'
+          //
+          //  BRLog.h —— 轻量日志（可开关、限流）
+          //
+          //  ★ 注意：Tweak.xm 是 Objective-C++（.xm 按 C++ 编译），而 BRLog.m 是纯
+          //  Objective-C（C 链接）。C 函数若不在头文件里用 extern "C" 声明，
+          //  ObjC++ 侧会按 C++ 规则对符号改名（mangling），与 .m 提供的 C 符号对不上，
+          //  链接时就会报 "symbol(s) not found" 并提示「声明可能缺少外部 C」。
+          //  所以下面这段 extern "C" 是必需的，不要删。
+          //
+          #import <Foundation/Foundation.h>
+
+          #ifdef __cplusplus
+          extern "C" {
+          #endif
+
+          void BRLogInit(void);
+          BOOL BRLogEnabled(void);
+
+          // 日志写入 /var/mobile/biloginalfx7.log（越狱环境可写）；
+          // 写不了就退化为 NSLog（Xcode / Console.app 可见）。
+          void BRLogWrite(NSString *fmt, ...) NS_FORMAT_FUNCTION(1, 2);
+
+          #ifdef __cplusplus
+          }
+          #endif
+
+          #define BRINFO(...) BRLogWrite(@"[I] " __VA_ARGS__)
+          #define BRDBG(...)  do { if (BRLogEnabled()) BRLogWrite(@"[D] " __VA_ARGS__); } while (0)
+          #define BRERR(...)  BRLogWrite(@"[E] " __VA_ARGS__)
+          BILIFIX_EOF_MARKER_7f3a
+          mkdir -p "$(dirname 'src/Core/BRLog.m')"
+          cat > 'src/Core/BRLog.m' << 'BILIFIX_EOF_MARKER_7f3a'
+          #import "BRLog.h"
+          #import <stdarg.h>
+
+          static BOOL gEnabled = YES;
+          static NSString *gLogPath = nil;
+          static NSLock *gLock = nil;
+          // 高频日志限流：同一行内容 30 秒内只记一次
+          static NSMutableDictionary *gThrottle = nil;
+
+          void BRLogInit(void) {
+              static dispatch_once_t once;
+              dispatch_once(&once, ^{
+                  gLock = [[NSLock alloc] init];
+                  gThrottle = [NSMutableDictionary dictionary];
+                  // 越狱环境可直接写；不可写时退化为 NSLog
+                  for (NSString *p in @[@"/var/mobile/biloginalfx7.log",
+                                        @"/tmp/biloginalfx7.log"]) {
+                      if ([[NSFileManager defaultManager] isWritableFileAtPath:
+                           [p stringByDeletingLastPathComponent]]) {
+                          gLogPath = p;
+                          break;
+                      }
+                  }
+                  if (gLogPath == nil) {
+                      gEnabled = NO;   // 只走 NSLog
+                  }
+              });
+          }
+
+          BOOL BRLogEnabled(void) { return gEnabled; }
+
+          void BRLogWrite(NSString *fmt, ...) {
+              va_list ap;
+              va_start(ap, fmt);
+              NSString *msg = [[NSString alloc] initWithFormat:fmt arguments:ap];
+              va_end(ap);
+              if (msg == nil) return;
+
+              // 限流：相同内容 30 秒内只写一次
+              [gLock lock];
+              NSDate *now = [NSDate date];
+              NSDate *last = [gThrottle objectForKey:msg];
+              if (last != nil && [now timeIntervalSinceDate:last] < 30.0) {
+                  [gLock unlock];
+                  return;
+              }
+              [gThrottle setObject:now forKey:msg];
+              if ([gThrottle count] > 400) [gThrottle removeAllObjects];
+
+              NSDateFormatter *df = [[NSDateFormatter alloc] init];
+              [df setDateFormat:@"MM-dd HH:mm:ss"];
+              NSString *line = [NSString stringWithFormat:@"[%@] %@\n",
+                                [df stringFromDate:now], msg];
+              [gLock unlock];
+
+              NSLog(@"[BiloginalfX7] %@", msg);
+
+              if (gLogPath != nil) {
+                  NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:gLogPath];
+                  if (fh == nil) {
+                      [line writeToFile:gLogPath atomically:NO
+                               encoding:NSUTF8StringEncoding error:NULL];
+                  } else {
+                      @try {
+                          [fh seekToEndOfFile];
+                          [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+                          [fh closeFile];
+                      } @catch (NSException *e) { }
+                  }
+              }
+          }
+          BILIFIX_EOF_MARKER_7f3a
+
+          echo "--- 生成的文件 ---"
+          find src -type f | sort
+          echo "--- Makefile 关键配置 ---"
+          grep -E "^export|^BiloginalfX7Probe_" src/Makefile
+
+      - name: 环境信息
+        run: |
+          echo "--- Xcode ---"
+          xcodebuild -version || true
+          echo "--- clang ---"
+          clang --version | head -3
+
+      - name: 安装 theos
+        run: |
+          set -e
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$HOME/theos"
+          echo "THEOS=$HOME/theos" >> "$GITHUB_ENV"
+          ls -la "$HOME/theos" | head -20
+
+      - name: 安装 iOS SDK
+        run: |
+          set -e
+          mkdir -p "$HOME/theos/sdks"
+          cd /tmp
+          git clone --depth 1 https://github.com/theos/sdks.git sdkrepo
+          find /tmp/sdkrepo -maxdepth 2 -name "*.sdk" -type d -print0 \
+            | while IFS= read -r -d '' d; do
+                cp -R "$d" "$HOME/theos/sdks/" 2>/dev/null || true
+              done
+          echo "--- 可用 SDK ---"
+          ls -1 "$HOME/theos/sdks"
+          # 明确检查我们要用的 9.3 在不在，并确认它有 armv7
+          if [ ! -d "$HOME/theos/sdks/iPhoneOS9.3.sdk" ]; then
+            echo "!! 缺少 iPhoneOS9.3.sdk（armv7 需要它）"
+            exit 1
+          fi
+          echo "--- 确认 9.3 SDK 里的 libSystem 支持 armv7 ---"
+          lipo -info "$HOME/theos/sdks/iPhoneOS9.3.sdk/usr/lib/libSystem.tbd" 2>/dev/null \
+            || file "$HOME/theos/sdks/iPhoneOS9.3.sdk/usr/lib/libSystem.tbd" 2>/dev/null \
+            || echo "(tbd 是文本文件，跳过)"
+
+      - name: 安装 ldid
+        run: |
+          set +e
+          if ! command -v ldid >/dev/null 2>&1; then
+            echo "--- 尝试 brew 安装 ldid ---"
+            brew install ldid 2>&1 | tail -5
+          fi
+          if ! command -v ldid >/dev/null 2>&1; then
+            echo "--- brew 不行，尝试 theos 自带安装脚本 ---"
+            "$HOME/theos/bin/install-theos" </dev/null 2>&1 | tail -10
+          fi
+          echo "--- 结果 ---"
+          command -v ldid && ldid -v 2>&1 | head -2 || echo "(ldid 不在 PATH，继续)"
+          ls -la "$HOME/theos/bin/ldid" 2>/dev/null || true
+          exit 0
+
+      - name: 编译
+        run: |
+          set -o pipefail
+          cd src
+          make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -150
+
+      - name: 收集产物
+        run: |
+          mkdir -p out
+          find src/packages -name "*.deb" -exec cp {} out/ \; 2>/dev/null || true
+          if [ -z "$(ls -A out 2>/dev/null)" ]; then
+            echo "=== 没有产出 deb，诊断信息如下 ==="
+            echo "--- src/packages ---"
+            ls -laR src/packages 2>/dev/null || echo "(不存在)"
+            echo "--- src/.theos/obj ---"
+            ls -laR src/.theos/obj 2>/dev/null | head -60 || echo "(不存在)"
+            echo "--- 用到的 SDK ---"
+            ls -1 "$HOME/theos/sdks" 2>/dev/null | head -20 || echo "(无)"
+            echo "--- ldid ---"
+            which ldid || echo "(找不到 ldid)"
+            ls -la "$HOME/theos/bin/ldid" 2>/dev/null || true
+            exit 1
+          fi
+          ls -la out/
+
+      - name: 上传 deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: probe-deb
+          path: out/*.deb
+          if-no-files-found: error
