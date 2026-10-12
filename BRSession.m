@@ -1,8 +1,8 @@
 #import "BRSession.h"
 #import "BRLog.h"
-#import <CommonCrypto/CommonDigest.h>
+#import "BRCrypto.h"   // CommonCrypto 改成运行时 dlsym 解析（见该文件顶部说明）
 #include <string.h>
-#import <CommonCrypto/CommonHMAC.h>
+
 
 static NSString *gBuvid3 = nil;
 static NSString *gBuvid4 = nil;
@@ -174,10 +174,10 @@ static NSString *BRWorkPath(NSString *name) {
 + (NSString *)md5:(NSString *)s {
     if (![s length]) return @"";
     const char *c = [s UTF8String];
-    unsigned char d[CC_MD5_DIGEST_LENGTH];
-    CC_MD5(c, (CC_LONG)strlen(c), d);
+    unsigned char d[BRCC_MD5_DIGEST_LENGTH];
+    BRCC_MD5(c, (BRCC_LONG)strlen(c), d);
     NSMutableString *o = [NSMutableString stringWithCapacity:32];
-    for (int i = 0; i < CC_MD5_DIGEST_LENGTH; i++) [o appendFormat:@"%02x", d[i]];
+    for (int i = 0; i < BRCC_MD5_DIGEST_LENGTH; i++) [o appendFormat:@"%02x", d[i]];
     return o;
 }
 

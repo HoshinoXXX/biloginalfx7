@@ -1,38 +1,37 @@
-# 二分第二轮：把 BRStore 和 BRSession 分开，定位到具体文件
+# BiloginalfX7 —— 哔哩哔哩 4.34 复活插件
 #
-# 关于 -Wno-deprecated-module-dot-map：
-#   9.3 SDK 里用的是旧式 module.map，某些版本的 clang 会把它当 default-error。
-#   但 macos-14 的新 clang 已经移除了这个警告 —— 此时再传 -Wno- 它，
-#   反而触发 -Wunknown-warning-option 错误。
-#   所以同时加上 -Wno-unknown-warning-option 兜底：两个版本都能编。
+# Alpha6.3 关键修复：CommonCrypto 改成运行时 dlsym 解析。
+#   直接引用 CC_MD5 会在 dylib 里留下未定义符号 _CC_MD5，dyld 在加载瞬间
+#   解析不到就让整个 dlopen 失败、dylib 被卸载（现象：dyld: loaded 紧跟
+#   dyld: unloaded，构造函数一行都不执行）。详见 BRCrypto.h 顶部说明。
+#
+# 警告标志：9.3 SDK 的旧式 module.map 在部分 clang 上触发弃用错误，
+#   但 macos-14 的新 clang 已移除该警告，再传 -Wno- 它反而报未知选项，
+#   所以加 -Wno-unknown-warning-option 兜底。
 export ARCHS = armv7
 export TARGET = iphone:clang:9.3:7.0
 
-export ADDITIONAL_CFLAGS     = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
-export ADDITIONAL_CCFLAGS    = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
-export ADDITIONAL_CXXFLAGS   = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
-export ADDITIONAL_OBJCFLAGS  = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
-export ADDITIONAL_OBJCCFLAGS = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
+WARNFLAGS = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
+
+export ADDITIONAL_CFLAGS     = $(WARNFLAGS)
+export ADDITIONAL_CCFLAGS    = $(WARNFLAGS)
+export ADDITIONAL_CXXFLAGS   = $(WARNFLAGS)
+export ADDITIONAL_OBJCFLAGS  = $(WARNFLAGS)
+export ADDITIONAL_OBJCCFLAGS = $(WARNFLAGS)
 
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = B5Probe B6Probe
+TWEAK_NAME = BiloginalfX7
 
-B5Probe_FILES = B5Probe.xm BRLog.m BRStore.m
-B6Probe_FILES = B6Probe.xm BRLog.m BRSession.m
+BiloginalfX7_FILES = Tweak.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m
 
-WARNFLAGS = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
+BiloginalfX7_CFLAGS     = -fobjc-arc $(WARNFLAGS)
+BiloginalfX7_CCFLAGS    = $(WARNFLAGS)
+BiloginalfX7_CXXFLAGS   = $(WARNFLAGS)
+BiloginalfX7_OBJCFLAGS  = $(WARNFLAGS)
+BiloginalfX7_OBJCCFLAGS = $(WARNFLAGS)
 
-B5Probe_CFLAGS = -fobjc-arc $(WARNFLAGS)
-B6Probe_CFLAGS = -fobjc-arc $(WARNFLAGS)
-B5Probe_CCFLAGS = $(WARNFLAGS)
-B6Probe_CCFLAGS = $(WARNFLAGS)
-B5Probe_OBJCFLAGS = $(WARNFLAGS)
-B6Probe_OBJCFLAGS = $(WARNFLAGS)
-B5Probe_OBJCCFLAGS = $(WARNFLAGS)
-B6Probe_OBJCCFLAGS = $(WARNFLAGS)
-
-B5Probe_FRAMEWORKS = Foundation CoreFoundation
-B6Probe_FRAMEWORKS = Foundation CoreFoundation
+BiloginalfX7_FRAMEWORKS = Foundation UIKit CoreFoundation Security
+BiloginalfX7_LDFLAGS    = -undefined dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
