@@ -38,14 +38,17 @@ jobs:
           set -e
           export THEOS=$HOME/theos
           git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          # theos 自带一个非空的 sdks 占位目录，必须先删掉才能 clone 真正的 SDK
+          rm -rf "$THEOS/sdks"
           git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
+          echo "--- 可用 SDK ---"
+          ls "$THEOS/sdks" | head -20
           brew install ldid
           # 9.3 SDK 的 liblaunch.tbd 里有个 re-export 指向不存在的路径，
           # 新版 ld 会因此报 file not found —— 把它替换成空 stub
           TBD="$THEOS/sdks/iPhoneOS9.3.sdk/usr/lib/system/liblaunch.tbd"
           if [ -f "$TBD" ]; then
-            sed -i '' '/^reexported-libraries:/,/^[a-z]/d' "$TBD" || true
-            printf '--- !tapi-tbd-v2\narchs: [ armv7 ]\ntbd-version: 2\ntargets: [ ios-armv7 ]\ninstall-name: /usr/lib/system/liblaunch.dylib\n' > "$TBD"
+            printf -- '--- !tapi-tbd-v2\narchs: [ armv7 ]\ntbd-version: 2\ntargets: [ ios-armv7 ]\ninstall-name: /usr/lib/system/liblaunch.dylib\n' > "$TBD"
           fi
           echo "THEOS=$THEOS" >> "$GITHUB_ENV"
 
