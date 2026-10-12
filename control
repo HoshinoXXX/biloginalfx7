@@ -9,7 +9,7 @@ Depends: mobilesubstrate | cydia-substrate, firmware (>= 7.0)
 Conflicts: com.jjr.bilifix7, com.hoshinoxxx.biloginalfx7probe
 Replaces: com.jjr.bilifix7
 Tag: purpose::extension, compatible_min::ios7.0
-Description: Revive the discontinued bilibili iOS client (BiliBili 4.34) on iOS 7 and later.
+Description: Revive the discontinued bilibili iOS client on iOS 7 and later.
  The app only talks to long-dead endpoints, so most pages and the player stopped working.
  This tweak registers an NSURLProtocol - the same layer as the app's own BiliURLProtocol,
  but matched first - and routes every legacy request to a current bilibili.com endpoint,
@@ -17,28 +17,27 @@ Description: Revive the discontinued bilibili iOS client (BiliBili 4.34) on iOS 
  and view code are left untouched. Four NSURLConnection entry points are hooked as a
  fallback for traffic that bypasses the URL loading system.
  .
- Why that layer: static analysis of the client binary (armv7 slice, symbol table not
- stripped - 193,296 symbols / 106,838 Objective-C methods) shows the network stack is
+ Why that layer: static analysis of the client binary shows the network stack is
  .
-     business APIs -> BiliApiV2/V3 -> APURLConnectionOperation (a forked AFNetworking)
+     business APIs -> BiliApiV2/V3 -> APURLConnectionOperation, a forked AFNetworking
                    -> -[NSURLConnection initWithRequest:delegate:]
-                   -> BiliURLProtocol (an NSURLProtocol subclass the app registers itself)
+                   -> BiliURLProtocol, an NSURLProtocol subclass the app registers
  .
  so the app already runs at the NSURLProtocol layer, and inserting there covers
  everything with a single hook point.
  .
  Covered endpoints:
-  * Video detail and playback URL (WBI signing, automatic avid/cid injection)
+  * Video detail and playback URL, with WBI signing and automatic avid/cid injection
   * Comments, danmaku and replies
-  * Home feed and regions (primary regions via the UWP channel, secondary regions
-    emulated by keyword search because the original service has been shut down)
-  * Search (all / bangumi / movie / uploader), with per-endpoint User-Agent handling
+  * Home feed and regions - primary regions via the UWP channel, secondary regions
+    emulated by keyword search because the original service has been shut down
+  * Search for all, bangumi, movie and uploader, with per-endpoint User-Agent handling
   * Bangumi index, detail and ranking
-  * 32-bit ID overflow fix (avid / cid / mid virtualization with persistent maps)
-  * Risk-control handling (full browser fingerprint, buvid3 + buvid4, anonymous
-    endpoints, request throttling)
-  * Login state injection (rewrites the nav response so the old client realises it
-    is signed in)
+  * 32-bit ID overflow fix: avid, cid and mid virtualization with persistent maps
+  * Risk-control handling: full browser fingerprint, buvid3 plus buvid4, anonymous
+    endpoints, request throttling
+  * Login state injection, by rewriting the nav response so the old client realises
+    it is signed in
  .
  No runtime dependencies - nothing but MobileSubstrate is required. The same package
  works on both iPhone and iPad.
