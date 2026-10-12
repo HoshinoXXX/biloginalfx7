@@ -190,25 +190,27 @@ jobs:
           #
           # 编译：make package
           #
-          # ★ 两个必须注意的点（都踩过坑）：
+          # ★ 本版只编 armv7（探针的目标设备是 iPhone 4 / iOS 7.1.1，就是 armv7）：
           #
-          # 1) SDK 版本必须显式写死，不能用 latest：
-          #    iOS 11 起苹果移除了 32 位支持，iPhoneOS11.4 及之后的 SDK 里所有框架
-          #    都只有 arm64 切片。用 latest（=16.5）链 armv7 时，连 _objc_msgSend /
-          #    ___CFConstantStringClassReference 这类系统符号都会报
-          #    "symbol(s) not found for architecture armv7"。
-          #    9.3 是社区仓库里最后一个完整带 armv7（同时也有 arm64）的 SDK。
+          #   为什么不要 arm64：
+          #   社区 SDK 仓库里仍带 armv7 的只有 9.3 / 10.3，而这两个 SDK 里的 .tbd 都是
+          #   旧格式（platform 字段写法与新版 ld 不兼容），新 ld 会认为「在为 iOS 构建，
+          #   却链接了为 iOS 模拟器构建的库」：
+          #     - 编 armv7 时这只是【警告】，链接照样成功（已验证）
+          #     - 编 arm64 时同样的信息变成【错误】，链接直接失败
+          #   所以探针阶段先只出 armv7；等确认入口、写完整版时再单独解决 arm64
+          #   （届时可以用更新的 SDK 只编 arm64，或用 9.3 编 armv7 的方式分开产出）。
           #
-          # 2) iOS 9.3 SDK 里的模块映射文件用的是旧名字 module.map，而新版 clang 把
-          #    「仍在使用 module.map」当成默认错误（default-error 诊断
-          #    -Wdeprecated-module-dot-map），一编译就 fatal error，报出
-          #    ".../objc/./module.map as a module map name is deprecated"。
-          #    必须把这个诊断关掉，否则编译根本进不去。
+          #   其他两个坑（已在下面配置里处理）：
+          #   1) SDK 不能用 latest：iOS 11 起没有 32 位，用 16.5 链 armv7 会报
+          #      "symbol(s) not found for architecture armv7"。
+          #   2) 9.3 SDK 里是旧式 module.map，新版 clang 当 default-error，
+          #      必须用 -Wno-deprecated-module-dot-map 关掉，否则编译进不去。
           #
-          export ARCHS = armv7 arm64
+          export ARCHS = armv7
           export TARGET = iphone:clang:9.3:7.0
 
-          # 关掉旧式 module.map 的诊断（5 个变量都设上，覆盖 .c/.m/.mm/.cpp 各种情况）
+          # 关掉旧式 module.map 的诊断（5 个变量都设，覆盖 .c/.m/.mm/.cpp）
           export ADDITIONAL_CFLAGS     = -Wno-deprecated-module-dot-map
           export ADDITIONAL_CCFLAGS    = -Wno-deprecated-module-dot-map
           export ADDITIONAL_CXXFLAGS   = -Wno-deprecated-module-dot-map
@@ -224,9 +226,7 @@ jobs:
           BiloginalfX7Probe_CXXFLAGS = -Wno-deprecated-module-dot-map
           BiloginalfX7Probe_OBJCFLAGS = -Wno-deprecated-module-dot-map
           BiloginalfX7Probe_OBJCCFLAGS = -Wno-deprecated-module-dot-map
-          # 探针只用到 Foundation / CoreFoundation（不要 UIKit，减少链接面）
           BiloginalfX7Probe_FRAMEWORKS = Foundation CoreFoundation
-          # tweak 的符号在运行时由宿主进程解析
           BiloginalfX7Probe_LDFLAGS = -undefined dynamic_lookup
 
           include $(THEOS_MAKE_PATH)/tweak.mk
