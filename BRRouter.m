@@ -196,14 +196,20 @@ static NSString *BRNum(id v) {
         NSString *type = qs[@"search_type"] ?: qs[@"type"] ?: @"video";
         if ([type isEqualToString:@"all"]) type = @"video";
         if ([type isEqualToString:@"bangumi"]) type = @"media_bangumi";
+        // ★ 用「非 wbi」的搜索接口：wbi 版在 iOS7 老客户端的 UA 下会被风控
+        //   挑战（返回 v_voucher），而非 wbi 版策略宽松得多。
         NSMutableString *base = [NSMutableString stringWithFormat:
-            @"https://api.bilibili.com/x/web-interface/wbi/search/type"
+            @"https://api.bilibili.com/x/web-interface/search/type"
             @"?search_type=%@&page=%@&keyword=%@", type, page, kw];
         // 综合搜索要给不少额外参数，否则返回结构不完整
         if ([type isEqualToString:@"video"]) {
             [base appendString:@"&order=totalrank&duration=0&tids=0&highlight=1"];
         }
-        r.url = [BRSession wbiSignURL:base];
+        // 补上风控指纹参数（缺这几个会拿到 v_voucher 而不是结果）
+        [base appendString:@"&dm_img_list=%5B%5D"
+                           @"&dm_img_str=V2ViR0wgMS4wIChPcGVuR0wgRVMgMi4wIENocm9taXVtKQ"
+                           @"&dm_img_inter=%7B%22ds%22%3A%5B%5D%2C%22wh%22%3A%5B0%2C0%2C0%5D%2C%22of%22%3A%5B0%2C0%2C0%5D%7D"];
+        r.url = base;
         r.kind = @"search";
         // ★ 搜索接口必须用浏览器 UA（其它接口要用 App UA —— 要求正好相反）
         r.ua = [BRSession searchUA];
