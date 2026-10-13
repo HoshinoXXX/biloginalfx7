@@ -43,7 +43,6 @@ static NSString *BRWorkPath(NSString *name) {
     return [NSTemporaryDirectory() stringByAppendingPathComponent:name];
 }
 
-@implementation BRSession+ (NSString *)appUA    { return @"BiliApp/434 (iPhone; iOS 7.1.2; Scale/2.00)"; }
 
 /* ==== 静态辅助函数（两个分组都需要）==== */
 static NSString *BRRFC3986(NSString *s) {
@@ -57,6 +56,7 @@ static NSString *BRRFC3986(NSString *s) {
     NSString *e = [s stringByAddingPercentEncodingWithAllowedCharacters:allowed];
     return e ? e : @"";
 }
+@implementation BRSession+ (NSString *)appUA    { return @"BiliApp/434 (iPhone; iOS 7.1.2; Scale/2.00)"; }
 + (NSString *)searchUA { return @"Mozilla/5.0 (iPhone; CPU iPhone OS 6_0 like Mac OS X) "
                                  "AppleWebKit/536.26"; }
 + (NSString *)loginUA  { return @"Mozilla/5.0 BiliDroid/2.0.1 (bbcallen@gmail.com) os/android "
