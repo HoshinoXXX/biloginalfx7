@@ -29,6 +29,7 @@
 #import "BRStore.h"
 #import "BRSession.h"
 #import "BRURLProtocol.h"
+#import "BRRouter.h"
 
 #pragma mark - 里程碑（完全独立，不依赖任何插件代码）
 
@@ -110,7 +111,7 @@ static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
 
         return m;
     } @catch (NSException *e) {
-        BRERR(@"[改写] 异常: %@", e);
+        BRERR(@"[改写] 异常: %@", [e description]);
         return req;
     }
 }
