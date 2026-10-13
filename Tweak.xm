@@ -61,6 +61,66 @@ static void BRMark(const char *tag) {
 
 // 返回改写后的请求；不需要改写时原样返回。
 // 出任何问题都原样返回 —— 绝不能让插件的故障影响 App。
+
+#pragma mark - ★ 响应改写代理
+
+// 只截「收到数据」和「加载完成」两个回调，其余全部原样转发给真实 delegate。
+@interface BRDelegateProxy : NSObject
+@property (nonatomic, strong) id        real;     // 真实 delegate（弱引用会挂，这里强持有）
+@property (nonatomic, strong) BRRoute  *route;
+@property (nonatomic, strong) NSMutableData *buf;
+@property (nonatomic, assign) BOOL      converted; // 已转换过就不再重复
+@end
+
+@implementation BRDelegateProxy
+
+- (BOOL)respondsToSelector:(SEL)sel {
+    if ([super respondsToSelector:sel]) return YES;
+    @try { return [_real respondsToSelector:sel]; } @catch (NSException *e) { return NO; }
+}
+
+// 没实现的方法统统转给真实 delegate
+- (id)forwardingTargetForSelector:(SEL)sel {
+    @try {
+        if (_real != nil && [_real respondsToSelector:sel]) return _real;
+    } @catch (NSException *e) { }
+    return [super forwardingTargetForSelector:sel];
+}
+
+- (void)connection:(NSURLConnection *)c didReceiveData:(NSData *)d {
+    @try {
+        if (_buf == nil) _buf = [NSMutableData data];
+        if (d != nil) [_buf appendData:d];
+    } @catch (NSException *e) { }
+}
+
+- (void)connectionDidFinishLoading:(NSURLConnection *)c {
+    @try {
+        NSData *out = _buf;
+        if (!_converted && _route != nil && _buf.length) {
+            _converted = YES;
+            NSData *conv = [BRRouter convertResponse:_buf forRoute:_route];
+            if (conv != nil) {
+                out = conv;
+                BRDBG(@"[改写] 响应 %@：%lu -> %lu 字节",
+                      _route.kind ?: @"?", (unsigned long)_buf.length, (unsigned long)conv.length);
+            }
+        }
+        if (out.length && [_real respondsToSelector:@selector(connection:didReceiveData:)])
+            [_real connection:c didReceiveData:out];
+        if ([_real respondsToSelector:@selector(connectionDidFinishLoading:)])
+            [_real connectionDidFinishLoading:c];
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 完成回调异常: %@", [e description]);
+        @try {
+            if ([_real respondsToSelector:@selector(connectionDidFinishLoading:)])
+                [_real connectionDidFinishLoading:c];
+        } @catch (NSException *e2) { }
+    }
+}
+
+@end
+
 static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
     @try {
         if (req == nil) return req;
