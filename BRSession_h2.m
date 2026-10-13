@@ -43,8 +43,8 @@ static NSString *BRWorkPath(NSString *name) {
     return [NSTemporaryDirectory() stringByAppendingPathComponent:name];
 }
 
-
-/* ==== 静态辅助函数（两个分组都需要）==== */
+@implementation BRSession
+/* ==== 静态辅助函数 ==== */
 static NSString *BRRFC3986(NSString *s) {
     static NSCharacterSet *allowed = nil;
     static dispatch_once_t once;
@@ -56,38 +56,106 @@ static NSString *BRRFC3986(NSString *s) {
     NSString *e = [s stringByAddingPercentEncodingWithAllowedCharacters:allowed];
     return e ? e : @"";
 }
-@implementation BRSession+ (NSString *)appUA    { return @"BiliApp/434 (iPhone; iOS 7.1.2; Scale/2.00)"; }
-+ (NSString *)searchUA { return @"Mozilla/5.0 (iPhone; CPU iPhone OS 6_0 like Mac OS X) "
-                                 "AppleWebKit/536.26"; }
-+ (NSString *)loginUA  { return @"Mozilla/5.0 BiliDroid/2.0.1 (bbcallen@gmail.com) os/android "
-                                 "model/android_hd mobi_app/android_hd build/2001100 channel/master"; }
-+ (NSDictionary *)headersForUA:(NSString *)ua {
-    NSMutableDictionary *h = [NSMutableDictionary dictionary];
-    BOOL custom = ([ua length] > 0);
-    [h setObject:(custom ? ua : [self chromeUA]) forKey:@"User-Agent"];
-    [h setObject:@"application/json, text/plain, */*" forKey:@"Accept"];
-    [h setObject:@"zh-CN,zh;q=0.9,en;q=0.8" forKey:@"Accept-Language"];
-    [h setObject:@"https://www.bilibili.com/" forKey:@"Referer"];
-    [h setObject:@"https://www.bilibili.com" forKey:@"Origin"];
-    // ★ 只设 UA、不带 Sec-Ch-Ua 系列，平时能过，请求一密集就开始 412。
-    //   但「客户端 UA + Chrome 的 Sec-Ch-Ua」混搭比不设还糟 —— 所以成套切换。
-    if (!custom) {
-        [h setObject:@"\"Chromium\";v=\"122\", \"Not(A:Brand\";v=\"24\", \"Google Chrome\";v=\"122\""
-              forKey:@"Sec-Ch-Ua"];
-        [h setObject:@"\"Windows\"" forKey:@"Sec-Ch-Ua-Platform"];
-        [h setObject:@"?0" forKey:@"Sec-Ch-Ua-Mobile"];
+
+@implementation BRSession
+
++ (void)bootstrap {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        gThrottleLock = [[NSLock alloc] init];
+        gBNut = [NSString stringWithFormat:@"%ld", (long)[[NSDate date] timeIntervalSince1970]];
+
+        // 用户导入的登录态（SESSDATA 三件套）
+        NSString *ck = [NSString stringWithContentsOfFile:BRWorkPath(@"usercookie.txt")
+                                                 encoding:NSUTF8StringEncoding error:NULL];
+        if (ck) {
+            gUserCookie = [ck stringByTrimmingCharactersInSet:
+                           [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+            if ([gUserCookie length]) BRINFO(@"已载入用户 Cookie（%lu 字节）", (unsigned long)[gUserCookie length]);
+        }
+    });
+}
+
++ (void)warmUp {
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        dispatch_async(dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_LOW, 0), ^{
+            @autoreleasepool {
+                [self fetchBuvid];
+                [self fetchWbiKeys];
+            }
+        });
+    });
+}
+
++ (void)fetchBuvid {
+    // ★ 预热请求本身也要带全套指纹，否则拿回来的可能是脏 buvid
+    NSString *u = @"https://api.bilibili.com/x/frontend/finger/spi";
+    NSData *d = [self rawGet:u ua:[self chromeUA] cookie:nil];
+    if (d == nil) { BRERR(@"取 buvid 失败"); return; }
+    NSDictionary *j = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
+    NSDictionary *data = [j isKindOfClass:[NSDictionary class]] ? [j objectForKey:@"data"] : nil;
+    if (![data isKindOfClass:[NSDictionary class]]) { BRERR(@"buvid 响应异常"); return; }
+    // ★ 两个都要：只带 buvid3 在不少接口上照样 -352 / -412
+    gBuvid3 = [data objectForKey:@"b_3"];
+    gBuvid4 = [data objectForKey:@"b_4"];
+    BRINFO(@"buvid3=%@ buvid4=%@", gBuvid3 ? @"✓" : @"✗", gBuvid4 ? @"✓" : @"✗");
+}
+
++ (void)fetchWbiKeys {
+    NSString *u = @"https://api.bilibili.com/x/web-interface/nav";
+    NSData *d = [self rawGet:u ua:[self chromeUA] cookie:[self cookie]];
+    if (d == nil) return;
+    NSDictionary *j = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
+    NSDictionary *data = [j isKindOfClass:[NSDictionary class]] ? [j objectForKey:@"data"] : nil;
+    NSDictionary *wi = [data isKindOfClass:[NSDictionary class]] ? [data objectForKey:@"wbi_img"] : nil;
+    NSString *img = [wi objectForKey:@"img_url"];
+    NSString *sub = [wi objectForKey:@"sub_url"];
+    if (![img isKindOfClass:[NSString class]] || ![sub isKindOfClass:[NSString class]]) {
+        BRERR(@"nav 没给 wbi_img，将用兜底 key");
+        return;
     }
-    return h;
+    NSString *a = [[img lastPathComponent] stringByDeletingPathExtension];
+    NSString *b = [[sub lastPathComponent] stringByDeletingPathExtension];
+    NSString *raw = [a stringByAppendingString:b];
+    if ([raw length] < 64) return;
+    NSMutableString *mix = [NSMutableString stringWithCapacity:32];
+    for (int i = 0; i < 64; i++) {
+        unichar c = [raw characterAtIndex:kWbiTab[i]];
+        [mix appendFormat:@"%C", c];
+    }
+    gWbiMixin = [mix substringToIndex:32];
+    BRINFO(@"wbi mixin 已就绪");
 }
-+ (NSString *)md5:(NSString *)s {
-    if (![s length]) return @"";
-    const char *c = [s UTF8String];
-    unsigned char d[BRCC_MD5_DIGEST_LENGTH];
-    BRCC_MD5(c, (BRCC_LONG)strlen(c), d);
-    NSMutableString *o = [NSMutableString stringWithCapacity:32];
-    for (int i = 0; i < BRCC_MD5_DIGEST_LENGTH; i++) [o appendFormat:@"%02x", d[i]];
-    return o;
+
++ (NSString *)buvid3 { return gBuvid3; }
+
++ (NSString *)buvid4 { return gBuvid4; }
+
++ (NSString *)bNut  { return gBNut; }
+
++ (BOOL)hasUserCookie { return [gUserCookie length] > 0; }
+
++ (void)setUserCookie:(NSString *)c {
+    gUserCookie = [c copy];
+    [gUserCookie writeToFile:BRWorkPath(@"usercookie.txt") atomically:YES
+                    encoding:NSUTF8StringEncoding error:NULL];
 }
+
++ (NSString *)cookie {
+    NSMutableArray *parts = [NSMutableArray array];
+    if ([gUserCookie length]) [parts addObject:gUserCookie];
+    if ([gBuvid3 length]) [parts addObject:[NSString stringWithFormat:@"buvid3=%@", gBuvid3]];
+    if ([gBuvid4 length]) [parts addObject:[NSString stringWithFormat:@"buvid4=%@", gBuvid4]];
+    if ([gBNut length])   [parts addObject:[NSString stringWithFormat:@"b_nut=%@", gBNut]];
+    return [parts componentsJoinedByString:@"; "];
+}
+
++ (NSString *)chromeUA {
+    return @"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
+            "(KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36";
+}
+
 + (NSString *)wbiSignURL:(NSString *)url {
     if (![url length]) return url;
     NSRange q = [url rangeOfString:@"?"];
@@ -124,6 +192,7 @@ static NSString *BRRFC3986(NSString *s) {
     NSString *rid = [self md5:[signed_ stringByAppendingString:mixin]];
     return [NSString stringWithFormat:@"%@?%@&w_rid=%@", base, signed_, rid];
 }
+
 + (NSString *)javaURLEncode:(NSString *)s {
     if (![s length]) return @"";
     NSData *d = [s dataUsingEncoding:NSUTF8StringEncoding];
@@ -142,6 +211,7 @@ static NSString *BRRFC3986(NSString *s) {
     }
     return o;
 }
+
 + (NSString *)appSignWithParams:(NSDictionary *)params
                          appkey:(NSString *)appkey
                          appsec:(NSString *)appsec {
@@ -163,6 +233,7 @@ static NSString *BRRFC3986(NSString *s) {
     // 末尾直接拼 appsec（没有分隔符），再取 md5
     return [self md5:[sb stringByAppendingString:appsec]];
 }
+
 + (void)throttle {
     [gThrottleLock lock];
     NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
@@ -171,6 +242,7 @@ static NSString *BRRFC3986(NSString *s) {
     [gThrottleLock unlock];
     if (wait > 0) [NSThread sleepForTimeInterval:wait];
 }
+
 + (NSData *)rawGet:(NSString *)url ua:(NSString *)ua cookie:(NSString *)cookie {
     NSMutableURLRequest *req = [NSMutableURLRequest requestWithURL:[NSURL URLWithString:url]];
     [req setTimeoutInterval:10];
@@ -185,53 +257,28 @@ static NSString *BRRFC3986(NSString *s) {
     return d;
 }
 
-/* ---- 以下为占位空壳（本组不含真实实现）---- */
-+ (void)bootstrap
-{
-}
-
-+ (void)warmUp
-{
-}
-
-+ (void)fetchBuvid
-{
-}
-
-+ (void)fetchWbiKeys
-{
-}
-
-+ (NSString *)buvid3
+/* ---- 占位空壳 ---- */
++ (NSString *)appUA
 {
     return nil;
 }
 
-+ (NSString *)buvid4
++ (NSString *)searchUA
 {
     return nil;
 }
 
-+ (NSString *)bNut
++ (NSString *)loginUA
 {
     return nil;
 }
 
-+ (BOOL)hasUserCookie
-{
-    return 0;
-}
-
-+ (void)setUserCookie:(NSString *)c
-{
-}
-
-+ (NSString *)cookie
++ (NSDictionary *)headersForUA:(NSString *)ua
 {
     return nil;
 }
 
-+ (NSString *)chromeUA
++ (NSString *)md5:(NSString *)s
 {
     return nil;
 }

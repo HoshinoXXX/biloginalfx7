@@ -9,11 +9,11 @@ export ADDITIONAL_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
 export ADDITIONAL_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = B14Probe B15Probe
-B14Probe_FILES = B14Probe.xm BRLog.m BRSession_g1.m
-B15Probe_FILES = B15Probe.xm BRLog.m BRSession_g2.m
-B14Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation -Wno-unused-variable -Wno-unused-const-variable -Wno-unused-function
-B15Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation -Wno-unused-variable -Wno-unused-const-variable -Wno-unused-function
-B14Probe_FRAMEWORKS = Foundation CoreFoundation
-B15Probe_FRAMEWORKS = Foundation CoreFoundation
+TWEAK_NAME = B16Probe B17Probe
+B16Probe_FILES = B16Probe.xm BRLog.m BRSession_h1.m
+B17Probe_FILES = B17Probe.xm BRLog.m BRSession_h2.m
+B16Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation -Wno-unused-variable -Wno-unused-const-variable -Wno-unused-function
+B17Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation -Wno-unused-variable -Wno-unused-const-variable -Wno-unused-function
+B16Probe_FRAMEWORKS = Foundation CoreFoundation
+B17Probe_FRAMEWORKS = Foundation CoreFoundation
 include $(THEOS_MAKE_PATH)/tweak.mk
