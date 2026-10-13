@@ -65,6 +65,31 @@ static void BRMark(const char *tag) {
 #pragma mark - ★ 响应改写代理
 
 // 只截「收到数据」和「加载完成」两个回调，其余全部原样转发给真实 delegate。
+// ★ NSURLConnection 对 delegate 是弱引用，代理对象必须被强持有，
+//   否则出作用域就释放 → 悬垂指针 → 崩溃。
+static NSMutableSet *gBRProxies = nil;
+static NSLock *gBRProxyLock = nil;
+
+static void BRHoldProxy(id px) {
+    @try {
+        if (px == nil) return;
+        if (gBRProxyLock == nil) gBRProxyLock = [[NSLock alloc] init];
+        [gBRProxyLock lock];
+        if (gBRProxies == nil) gBRProxies = [[NSMutableSet alloc] init];
+        [gBRProxies addObject:px];
+        [gBRProxyLock unlock];
+    } @catch (NSException *e) { }
+}
+
+static void BRReleaseProxy(id px) {
+    @try {
+        if (px == nil) return;
+        [gBRProxyLock lock];
+        [gBRProxies removeObject:px];
+        [gBRProxyLock unlock];
+    } @catch (NSException *e) { }
+}
+
 @interface BRDelegateProxy : NSObject
 @property (nonatomic, strong) id        real;     // 真实 delegate（弱引用会挂，这里强持有）
 @property (nonatomic, strong) BRRoute  *route;
@@ -110,6 +135,7 @@ static void BRMark(const char *tag) {
             [_real connection:c didReceiveData:out];
         if ([_real respondsToSelector:@selector(connectionDidFinishLoading:)])
             [_real connectionDidFinishLoading:c];
+        BRReleaseProxy(self);   // ★ 用完就放
     } @catch (NSException *e) {
         BRERR(@"[改写] 完成回调异常: %@", [e description]);
         @try {
@@ -235,6 +261,7 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
                 px.real = delegate;
                 px.route = r;
                 brd = px;
+                BRHoldProxy(px);   // ★ 必须强持有，否则会被提前释放
                 BRDBG(@"[改写] 已挂响应代理（%@）", r.kind);
             }
         }
