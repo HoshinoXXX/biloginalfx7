@@ -60,8 +60,20 @@ static BOOL BRIsImageHost(NSString *host) {
 // ---------------------------------------------------------------- 内部抓取
 
 
+/* ==== 仅供编译器使用的影子接口 ====
+   它继承 NSObject（不产生 NSURLProtocol 相关符号），
+   只用来让编译器认识 self 的成员和方法签名。
+   真正的类由下面的 BRURLProtocolClass() 在运行时拼装。 */
+@interface BRURLProtocolShim : NSObject
+@property (readonly) id<NSURLProtocolClient> client;
+@property (readonly, copy) NSURLRequest *request;
+- (void)fetchAndDeliverURL:(id)u route:(id)r;
+- (void)finishWithError:(id)e;
+@end
+
+
 /* ==== 运行时类工厂（替代编译期 @interface）==== */
-static BOOL BRUPCanInit(id self, SEL _cmd, NSURLRequest  * request)
+static BOOL BRUPCanInit(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * request)
 {
     // ① 本线程正在抓取中 —— 一律放行（递归闸门）
     if (BRFetchDepth() > 0) return NO;
@@ -97,17 +109,17 @@ static BOOL BRUPCanInit(id self, SEL _cmd, NSURLRequest  * request)
     return YES;
 }
 
-static NSURLRequest * BRUPCanonical(id self, SEL _cmd, NSURLRequest  * request)
+static NSURLRequest * BRUPCanonical(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * request)
 {
     return request;
 }
 
-static BOOL BRUPIsCacheEquivalent(id self, SEL _cmd, NSURLRequest  * a, NSURLRequest  * b)
+static BOOL BRUPIsCacheEquivalent(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * a, NSURLRequest  * b)
 {
     return [[a URL] isEqual:[b URL]];
 }
 
-static void BRUPStartLoading(id self, SEL _cmd)
+static void BRUPStartLoading(BRURLProtocolShim *self, SEL _cmd)
 {
     NSURLRequest *req = [self request];
     BRRoute *route = [BRRouter routeForRequest:req];
@@ -138,12 +150,12 @@ static void BRUPStartLoading(id self, SEL _cmd)
     [self fetchAndDeliverURL:route.url route:route];
 }
 
-static void BRUPStopLoading(id self, SEL _cmd)
+static void BRUPStopLoading(BRURLProtocolShim *self, SEL _cmd)
 {
     // 同步抓取无法中断；这里只做标记
 }
 
-static void BRUPFetchAndDeliver(id self, SEL _cmd, NSString  * urlStr, BRRoute  * route)
+static void BRUPFetchAndDeliver(BRURLProtocolShim *self, SEL _cmd, NSString  * urlStr, BRRoute  * route)
 {
     NSURLRequest *orig = [self request];
     NSString *method = [orig HTTPMethod] ?: @"GET";
@@ -248,7 +260,7 @@ static void BRUPFetchAndDeliver(id self, SEL _cmd, NSString  * urlStr, BRRoute  
     });
 }
 
-static void BRUPFinishWithError(id self, SEL _cmd, NSError  * err)
+static void BRUPFinishWithError(BRURLProtocolShim *self, SEL _cmd, NSError  * err)
 {
     if (err == nil) err = [NSError errorWithDomain:@"BR" code:-1
                                           userInfo:@{NSLocalizedDescriptionKey: @"请求失败"}];
