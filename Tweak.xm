@@ -143,7 +143,7 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
 
         // ④ 注册 NSURLProtocol
         @try {
-            Class protoCls = BRURLProtocolClass();   // ★ 运行时创建，不用 objc_getClass
+            Class protoCls = Nil;   // ★ Alpha9.1：NSURLProtocol 层暂时关闭（运行时建类会导致 App 崩溃）
             if (protoCls != Nil) {
                 Class protoBase = NSClassFromString(@"NSURLProtocol");   // ★ 运行时取类，避免符号引用
                 if (protoBase != Nil) [protoBase registerClass:protoCls];
