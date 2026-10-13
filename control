@@ -1,17 +1,45 @@
-Package: com.hoshinoxxx.biloginalfx7.bisect3
-Name: BiloginalfX7-Bisect3
-Version: 7.5-Bisect10
+Package: com.hoshinoxxx.biloginalfx7
+Name: BiloginalfX7
+Version: 7.0-Alpha7.0
 Section: Tweaks
 Maintainer: HoshinoXXX
 Author: HoshinoXXX
 Architecture: iphoneos-arm
 Depends: mobilesubstrate | cydia-substrate, firmware (>= 7.0)
+Conflicts: com.jjr.bilifix7, com.hoshinoxxx.biloginalfx7probe, com.hoshinoxxx.biloginalfx7.bisect, com.hoshinoxxx.biloginalfx7.bisect2
+Replaces: com.jjr.bilifix7
 Tag: purpose::extension, compatible_min::ios7.0
-Description: Third bisect round for BiloginalfX7 - internal diagnostics only.
- B7 loads the logging subsystem and the persistent ID store.
- B8 loads the logging subsystem and the session layer, now with the
- CommonCrypto reference resolved at runtime instead of link time.
- B9 loads the logging subsystem, the router and the URL protocol layer,
- which is the only combination not yet isolated.
+Description: Revive the discontinued bilibili iOS client on iOS 7 and later.
+ The app only talks to long-dead endpoints, so most pages and the player stopped working.
+ This tweak registers an NSURLProtocol - the same layer as the app's own BiliURLProtocol,
+ but matched first - and routes every legacy request to a current bilibili.com endpoint,
+ rewriting the response back into the shape the old client expects. The app's own model
+ and view code are left untouched. Four NSURLConnection entry points are hooked as a
+ fallback for traffic that bypasses the URL loading system.
  .
- Each probe appends one line to its own marker file under slash tmp.
+ Why that layer: static analysis of the client binary shows the network stack is
+ .
+     business APIs -> BiliApiV2/V3 -> APURLConnectionOperation, a forked AFNetworking
+                   -> -[NSURLConnection initWithRequest:delegate:]
+                   -> BiliURLProtocol, an NSURLProtocol subclass the app registers
+ .
+ so the app already runs at the NSURLProtocol layer, and inserting there covers
+ everything with a single hook point.
+ .
+ Covered endpoints:
+  * Video detail and playback URL, with WBI signing and automatic avid/cid injection
+  * Comments, danmaku and replies
+  * Home feed and regions - primary regions via the UWP channel, secondary regions
+    emulated by keyword search because the original service has been shut down
+  * Search for all, bangumi, movie and uploader, with per-endpoint User-Agent handling
+  * Bangumi index, detail and ranking
+  * 32-bit ID overflow fix: avid, cid and mid virtualization with persistent maps
+  * Risk-control handling: full browser fingerprint, buvid3 plus buvid4, anonymous
+    endpoints, request throttling
+  * Login state injection, by rewriting the nav response so the old client realises
+    it is signed in
+ .
+ No runtime dependencies - nothing but MobileSubstrate is required. The same package
+ works on both iPhone and iPad.
+ .
+ This package exists only so that a discontinued client can keep reaching public content.

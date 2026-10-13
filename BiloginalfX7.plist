@@ -1,0 +1,11 @@
+{
+    Filter = {
+        Bundles = (
+            "tv.danmaku.bilianime",
+            "tv.danmaku.bilianimeHD",
+            "tv.danmaku.bilibiliHD",
+            "com.bilibili.bilianime",
+            "com.apple.springboard"
+        );
+    };
+}
