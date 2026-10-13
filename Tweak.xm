@@ -165,13 +165,13 @@ static void BRRunSelfTest(void) {
 
         for (NSString *u in urls) {
             @try {
-                NSURL *url = [NSURL URLWithString:u];
-                NSURLRequest *req = [NSURLRequest requestWithURL:url
+                NSURL *url = [NSClassFromString(@"NSURL") URLWithString:u];
+                NSURLRequest *req = [NSClassFromString(@"NSURLRequest") requestWithURL:url
                                                      cachePolicy:NSURLRequestReloadIgnoringCacheData
                                                  timeoutInterval:10];
                 NSHTTPURLResponse *resp = nil;
                 NSError *err = nil;
-                NSData *d = [NSURLConnection sendSynchronousRequest:req
+                NSData *d = [NSClassFromString(@"NSURLConnection") sendSynchronousRequest:req
                                                   returningResponse:&resp
                                                               error:&err];
                 BRINFO(@"[自检] %@ => HTTP %ld, %lu 字节, err=%@",
