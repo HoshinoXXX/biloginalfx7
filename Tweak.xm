@@ -164,7 +164,7 @@ static void BRRunSelfTest(void) {
             // ★ 番剧（bangumi 路由）
             @"http://bangumi.bilibili.com/api/timeline_v2?type=1",
             // ★ 播放地址（playurl 路由）
-            @"http://interface.bilibili.com/playurl?aid=2&cid=1&qn=32&platform=html5",
+            @"http://interface.bilibili.com/playurl?aid=170001&cid=279786&qn=32&platform=html5",
             nil];
 
         for (NSString *u in urls) {
