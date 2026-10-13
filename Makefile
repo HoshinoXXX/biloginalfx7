@@ -12,7 +12,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = B7Probe B8Probe B9Probe
 B7Probe_FILES = B7Probe.xm BRLog.m BRStore.m
 B8Probe_FILES = B8Probe.xm BRLog.m BRSession.m
-B9Probe_FILES = B9Probe.xm BRLog.m BRRouter.m BRURLProtocol.m
+B9Probe_FILES = B9Probe.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m
 B7Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
 B8Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
 B9Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
