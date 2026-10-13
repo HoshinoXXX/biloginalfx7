@@ -147,6 +147,50 @@ static void BRReleaseProxy(id px) {
 
 @end
 
+
+#pragma mark - ★ 自检：主动发一个请求走 NSURLConnection，验证改写链路
+
+// 只有存在 /tmp/br-selftest 时才跑（避免影响正常使用）
+static void BRRunSelfTest(void) {
+    @autoreleasepool {
+        if (![[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-selftest"]) return;
+        BRINFO(@"[自检] ===== 开始 =====");
+
+        // 挑一个 BRRouter 一定会改写的接口
+        NSArray *urls = [NSArray arrayWithObjects:
+            @"http://app.bilibili.com/x/v2/feed/index?build=4070&mobi_app=iphone&pn=1&ps=10",
+            @"http://api.bilibili.com/x/v2/reply?type=1&oid=1&pn=1&ps=20",
+            @"http://app.bilibili.com/x/v2/search?keyword=test&build=4070",
+            nil];
+
+        for (NSString *u in urls) {
+            @try {
+                NSURL *url = [NSURL URLWithString:u];
+                NSURLRequest *req = [NSURLRequest requestWithURL:url
+                                                     cachePolicy:NSURLRequestReloadIgnoringCacheData
+                                                 timeoutInterval:10];
+                NSHTTPURLResponse *resp = nil;
+                NSError *err = nil;
+                NSData *d = [NSURLConnection sendSynchronousRequest:req
+                                                  returningResponse:&resp
+                                                              error:&err];
+                BRINFO(@"[自检] %@ => HTTP %ld, %lu 字节, err=%@",
+                       [url path], (long)[resp statusCode],
+                       (unsigned long)[d length], err ? @"有" : @"无");
+                if ([d length]) {
+                    NSString *head = [[NSString alloc] initWithData:
+                        [d subdataWithRange:NSMakeRange(0, MIN((NSUInteger)160, [d length]))]
+                        encoding:NSUTF8StringEncoding];
+                    BRINFO(@"[自检] 响应开头: %@", head ?: @"(非 UTF8)");
+                }
+            } @catch (NSException *e) {
+                BRINFO(@"[自检] %@ 异常: %@", u, [e description]);
+            }
+        }
+        BRINFO(@"[自检] ===== 结束 =====");
+    }
+}
+
 static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
     @try {
         if (req == nil) return req;
@@ -347,6 +391,7 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
         }
 
         BRMark("07 初始化全部完成");
-        @try { BRINFO(@"初始化完成"); } @catch (NSException *e) { }
+        @try { BRINFO(@"初始化完成");
+            BRRunSelfTest();   // ★ 自检 } @catch (NSException *e) { }
     }
 }
