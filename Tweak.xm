@@ -145,7 +145,8 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
         @try {
             Class protoCls = BRURLProtocolClass();   // ★ 运行时创建，不用 objc_getClass
             if (protoCls != Nil) {
-                [NSURLProtocol registerClass:protoCls];
+                Class protoBase = NSClassFromString(@"NSURLProtocol");   // ★ 运行时取类，避免符号引用
+                if (protoBase != Nil) [protoBase registerClass:protoCls];
                 BRMark("05 BRURLProtocol 已注册");
                 BRINFO(@"已注册 BRURLProtocol");
             } else {
