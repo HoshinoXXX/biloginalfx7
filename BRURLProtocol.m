@@ -193,9 +193,8 @@ static BOOL BRIsImageHost(NSString *host) {
             // ★ 不能用 [NSURLConnection ...] —— iOS 上它的 ObjC 类符号在
             //   dlopen 时解析不到，会让整个 dylib 被卸载。
             Class _brConnCls = NSClassFromString(@"NSURLConnection");
-            if (_brConnCls == Nil) { return nil; }
-            NSData *data = [_brConnCls sendSynchronousRequest:marked
-                                                 returningResponse:&resp error:&err];
+            NSData *data = (_brConnCls ? [_brConnCls sendSynchronousRequest:marked
+                                                 returningResponse:&resp error:&err] : nil);
             BRSetFetchDepth(BRFetchDepth() - 1);      // 放下闸门
 
             if (data == nil && err != nil) {
