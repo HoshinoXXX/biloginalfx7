@@ -381,10 +381,10 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
         @try {
             Class conn = objc_getClass("NSURLConnection");
             if (conn != Nil) {
-                MSHookMessageEx(conn,
+                MSHookMessageEx(object_getClass(conn),
                     @selector(sendSynchronousRequest:returningResponse:error:),
                     (IMP)&h_sendSync, (IMP *)&o_sendSync);
-                MSHookMessageEx(conn,
+                MSHookMessageEx(object_getClass(conn),
                     @selector(sendAsynchronousRequest:queue:completionHandler:),
                     (IMP)&h_sendAsync, (IMP *)&o_sendAsync);
                 MSHookMessageEx(conn, @selector(initWithRequest:delegate:),
