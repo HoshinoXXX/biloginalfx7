@@ -74,8 +74,8 @@ static BOOL BRIsImageHost(NSString *host) {
 
 
 /* ==== 运行时类工厂（替代编译期 @interface）==== */
-static BOOL BRUPCanInit(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * request)
-{
+static BOOL BRUPCanInit(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * request) {
+    @try {
     // ① 本线程正在抓取中 —— 一律放行（递归闸门）
     if (BRFetchDepth() > 0) return NO;
 
@@ -108,20 +108,38 @@ static BOOL BRUPCanInit(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * reque
         if (!([path hasPrefix:@"/index/"] || [path hasPrefix:@"/x/"])) return NO;
     }
     return YES;
+
+    } @catch (NSException *e) {
+        // ★ 绝不让异常冒泡到 App —— 宁可这次不改写
+        NSLog(@"[BiloginalfX7] BRUPCanInit 异常: %@", e);
+        return 0;
+    }
 }
 
-static NSURLRequest * BRUPCanonical(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * request)
-{
+static NSURLRequest * BRUPCanonical(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * request) {
+    @try {
     return request;
+
+    } @catch (NSException *e) {
+        // ★ 绝不让异常冒泡到 App —— 宁可这次不改写
+        NSLog(@"[BiloginalfX7] BRUPCanonical 异常: %@", e);
+        return nil;
+    }
 }
 
-static BOOL BRUPIsCacheEquivalent(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * a, NSURLRequest  * b)
-{
+static BOOL BRUPIsCacheEquivalent(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * a, NSURLRequest  * b) {
+    @try {
     return [[a URL] isEqual:[b URL]];
+
+    } @catch (NSException *e) {
+        // ★ 绝不让异常冒泡到 App —— 宁可这次不改写
+        NSLog(@"[BiloginalfX7] BRUPIsCacheEquivalent 异常: %@", e);
+        return 0;
+    }
 }
 
-static void BRUPStartLoading(BRURLProtocolShim *self, SEL _cmd)
-{
+static void BRUPStartLoading(BRURLProtocolShim *self, SEL _cmd) {
+    @try {
     NSURLRequest *req = [self request];
     BRRoute *route = [BRRouter routeForRequest:req];
 
@@ -149,15 +167,27 @@ static void BRUPStartLoading(BRURLProtocolShim *self, SEL _cmd)
           [[route.url substringToIndex:130] stringByAppendingString:@"…"] : route.url);
 
     [self fetchAndDeliverURL:route.url route:route];
+
+    } @catch (NSException *e) {
+        // ★ 绝不让异常冒泡到 App —— 宁可这次不改写
+        NSLog(@"[BiloginalfX7] BRUPStartLoading 异常: %@", e);
+        
+    }
 }
 
-static void BRUPStopLoading(BRURLProtocolShim *self, SEL _cmd)
-{
+static void BRUPStopLoading(BRURLProtocolShim *self, SEL _cmd) {
+    @try {
     // 同步抓取无法中断；这里只做标记
+
+    } @catch (NSException *e) {
+        // ★ 绝不让异常冒泡到 App —— 宁可这次不改写
+        NSLog(@"[BiloginalfX7] BRUPStopLoading 异常: %@", e);
+        
+    }
 }
 
-static void BRUPFetchAndDeliver(BRURLProtocolShim *self, SEL _cmd, NSString  * urlStr, BRRoute  * route)
-{
+static void BRUPFetchAndDeliver(BRURLProtocolShim *self, SEL _cmd, NSString  * urlStr, BRRoute  * route) {
+    @try {
     NSURLRequest *orig = [self request];
     NSString *method = [orig HTTPMethod] ?: @"GET";
     NSData *body = [orig HTTPBody];
@@ -259,13 +289,25 @@ static void BRUPFetchAndDeliver(BRURLProtocolShim *self, SEL _cmd, NSString  * u
             [self.client URLProtocolDidFinishLoading:self];
         }
     });
+
+    } @catch (NSException *e) {
+        // ★ 绝不让异常冒泡到 App —— 宁可这次不改写
+        NSLog(@"[BiloginalfX7] BRUPFetchAndDeliver 异常: %@", e);
+        
+    }
 }
 
-static void BRUPFinishWithError(BRURLProtocolShim *self, SEL _cmd, NSError  * err)
-{
+static void BRUPFinishWithError(BRURLProtocolShim *self, SEL _cmd, NSError  * err) {
+    @try {
     if (err == nil) err = [NSError errorWithDomain:@"BR" code:-1
                                           userInfo:@{NSLocalizedDescriptionKey: @"请求失败"}];
     [self.client URLProtocol:self didFailWithError:err];
+
+    } @catch (NSException *e) {
+        // ★ 绝不让异常冒泡到 App —— 宁可这次不改写
+        NSLog(@"[BiloginalfX7] BRUPFinishWithError 异常: %@", e);
+        
+    }
 }
 
 
