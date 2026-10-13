@@ -20,7 +20,16 @@ static NSLock *gLock = nil;
 
 static NSString *BRWorkDir(void) {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *cands = [NSArray arrayWithObjects:@"/var/mobile/bilifix", @"/tmp", nil];
+    // ★ 顺序很重要：App 自己的 Documents 在沙盒内一定可写，
+    //   而 /var/mobile/bilifix 对沙盒进程是不可写的 —— isWritableFileAtPath:
+    //   只看 POSIX 权限、不看沙盒规则，会误判成可写，
+    //   导致映射表写不进去（现象：SpringBoard 里 91 条、B站里只有 1 条）。
+    NSString *brHome = NSHomeDirectory();
+    NSString *brDocs = brHome ? [brHome stringByAppendingPathComponent:@"Documents"] : nil;
+    NSMutableArray *cands = [NSMutableArray array];
+    if (brDocs != nil) [cands addObject:brDocs];
+    [cands addObject:@"/var/mobile/bilifix"];
+    [cands addObject:@"/tmp"];
     for (NSString *d in cands) {
         BOOL isDir = NO;
         if (![fm fileExistsAtPath:d isDirectory:&isDir] || !isDir) {
