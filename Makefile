@@ -10,8 +10,11 @@ export ADDITIONAL_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
 export ADDITIONAL_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = B18Probe
-B18Probe_FILES = B18Probe.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m
-B18Probe_CFLAGS = $(FLAGS)
-B18Probe_FRAMEWORKS = Foundation CoreFoundation
+TWEAK_NAME = B19Probe B20Probe
+B19Probe_FILES = B19Probe.xm BRLog.m BRStore.m BRSession.m BRRouter.m
+B20Probe_FILES = B20Probe.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m
+B19Probe_CFLAGS = $(FLAGS)
+B20Probe_CFLAGS = $(FLAGS)
+B19Probe_FRAMEWORKS = Foundation CoreFoundation
+B20Probe_FRAMEWORKS = Foundation CoreFoundation
 include $(THEOS_MAKE_PATH)/tweak.mk
