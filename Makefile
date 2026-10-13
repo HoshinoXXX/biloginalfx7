@@ -9,11 +9,11 @@ export ADDITIONAL_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
 export ADDITIONAL_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
 include $(THEOS)/makefiles/common.mk
 
-TWEAK_NAME = B10Probe B11Probe
-B10Probe_FILES = B10Probe.xm BRLog.m BRSession_min.m
-B11Probe_FILES = B11Probe.xm BRLog.m BRSession.m
-B10Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation
-B11Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
-B10Probe_FRAMEWORKS = Foundation CoreFoundation
-B11Probe_FRAMEWORKS = Foundation CoreFoundation
+TWEAK_NAME = B12Probe B13Probe
+B12Probe_FILES = B12Probe.xm BRLog.m BRSession_min2.m
+B13Probe_FILES = B13Probe.xm BRLog.m BRSession_min3.m
+B12Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation
+B13Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation
+B12Probe_FRAMEWORKS = Foundation CoreFoundation
+B13Probe_FRAMEWORKS = Foundation CoreFoundation
 include $(THEOS_MAKE_PATH)/tweak.mk
