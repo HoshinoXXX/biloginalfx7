@@ -391,7 +391,7 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
         }
 
         BRMark("07 初始化全部完成");
-        @try { BRINFO(@"初始化完成");
-            BRRunSelfTest();   // ★ 自检 } @catch (NSException *e) { }
+        @try { BRINFO(@"初始化完成"); } @catch (NSException *e) { }
+        BRRunSelfTest();   // 自检
     }
 }
