@@ -43,21 +43,9 @@ static NSString *BRWorkPath(NSString *name) {
     return [NSTemporaryDirectory() stringByAppendingPathComponent:name];
 }
 
+@implementation BRSession
 
-/* ==== 静态辅助函数 ==== */
-static NSString *BRRFC3986(NSString *s) {
-    static NSCharacterSet *allowed = nil;
-    static dispatch_once_t once;
-    dispatch_once(&once, ^{
-        NSMutableCharacterSet *cs = [NSMutableCharacterSet alphanumericCharacterSet];
-        [cs addCharactersInString:@"-._~"];
-        allowed = cs;
-    });
-    NSString *e = [s stringByAddingPercentEncodingWithAllowedCharacters:allowed];
-    return e ? e : @"";
-}
-
-@implementation BRSession+ (void)bootstrap {
++ (void)bootstrap {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         gThrottleLock = [[NSLock alloc] init];
@@ -85,6 +73,8 @@ static NSString *BRRFC3986(NSString *s) {
         });
     });
 }
+
+#pragma mark - buvid
 
 + (void)fetchBuvid {
     // ★ 预热请求本身也要带全套指纹，否则拿回来的可能是脏 buvid
@@ -126,12 +116,11 @@ static NSString *BRRFC3986(NSString *s) {
     BRINFO(@"wbi mixin 已就绪");
 }
 
+#pragma mark - 身份
+
 + (NSString *)buvid3 { return gBuvid3; }
-
 + (NSString *)buvid4 { return gBuvid4; }
-
 + (NSString *)bNut  { return gBNut; }
-
 + (BOOL)hasUserCookie { return [gUserCookie length] > 0; }
 
 + (void)setUserCookie:(NSString *)c {
@@ -149,16 +138,15 @@ static NSString *BRRFC3986(NSString *s) {
     return [parts componentsJoinedByString:@"; "];
 }
 
+#pragma mark - 请求头
+
 + (NSString *)chromeUA {
     return @"Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 "
             "(KHTML, like Gecko) Chrome/122.0.6261.95 Safari/537.36";
 }
-
 + (NSString *)appUA    { return @"BiliApp/434 (iPhone; iOS 7.1.2; Scale/2.00)"; }
-
 + (NSString *)searchUA { return @"Mozilla/5.0 (iPhone; CPU iPhone OS 6_0 like Mac OS X) "
                                  "AppleWebKit/536.26"; }
-
 + (NSString *)loginUA  { return @"Mozilla/5.0 BiliDroid/2.0.1 (bbcallen@gmail.com) os/android "
                                  "model/android_hd mobi_app/android_hd build/2001100 channel/master"; }
 
@@ -181,6 +169,8 @@ static NSString *BRRFC3986(NSString *s) {
     return h;
 }
 
+#pragma mark - 摘要
+
 + (NSString *)md5:(NSString *)s {
     if (![s length]) return @"";
     const char *c = [s UTF8String];
@@ -189,6 +179,21 @@ static NSString *BRRFC3986(NSString *s) {
     NSMutableString *o = [NSMutableString stringWithCapacity:32];
     for (int i = 0; i < BRCC_MD5_DIGEST_LENGTH; i++) [o appendFormat:@"%02x", d[i]];
     return o;
+}
+
+#pragma mark - wbi 签名
+
+// RFC3986（空格 -> %20）。wbi 用这一套。
+static NSString *BRRFC3986(NSString *s) {
+    static NSCharacterSet *allowed = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableCharacterSet *cs = [NSMutableCharacterSet alphanumericCharacterSet];
+        [cs addCharactersInString:@"-._~"];
+        allowed = cs;
+    });
+    NSString *e = [s stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+    return e ? e : @"";
 }
 
 + (NSString *)wbiSignURL:(NSString *)url {
@@ -228,6 +233,11 @@ static NSString *BRRFC3986(NSString *s) {
     return [NSString stringWithFormat:@"%@?%@&w_rid=%@", base, signed_, rid];
 }
 
+#pragma mark - APP 签名
+
+// Java URLEncoder.encode(s, "UTF-8") 语义：
+//   保留 A-Z a-z 0-9 . - * _   空格 -> +   其余 UTF-8 字节 %XX（大写）
+// ⚠️ 与 wbi 的 RFC3986 是两套编码，绝不能共用。
 + (NSString *)javaURLEncode:(NSString *)s {
     if (![s length]) return @"";
     NSData *d = [s dataUsingEncoding:NSUTF8StringEncoding];
@@ -269,6 +279,8 @@ static NSString *BRRFC3986(NSString *s) {
     return [self md5:[sb stringByAppendingString:appsec]];
 }
 
+#pragma mark - 限流
+
 + (void)throttle {
     [gThrottleLock lock];
     NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
@@ -278,10 +290,38 @@ static NSString *BRRFC3986(NSString *s) {
     if (wait > 0) [NSThread sleepForTimeInterval:wait];
 }
 
-/* ---- 占位空壳 ---- */
-+ (NSData *)rawGet:(NSString *)url ua:(NSString *)ua cookie:(NSString *)cookie
-{
-    return nil;
+#pragma mark - 内部同步 GET（不走 NSURLProtocol，避免递归）
+
++ (NSData *)rawGet:(NSString *)url ua:(NSString *)ua cookie:(NSString *)cookie {
+    // ★★ 这里绝不能直接写 [NSURLConnection ...] ——
+    //    iOS 上 NSURLConnection 的实现位于 CFNetwork，而本插件用的是
+    //    -undefined dynamic_lookup。dyld 在加载那一瞬间解析不到
+    //    _OBJC_CLASS_$_NSURLConnection，dlopen 就返回 NULL，
+    //    SubstrateLoader 随即把整个 dylib 卸载（构造函数一行都不执行）。
+    //    改成 NSClassFromString 之后，符号表里只会有 _NSClassFromString
+    //    （Foundation 的普通函数，一定能解析），类引用推迟到真正调用时。
+    Class reqCls  = NSClassFromString(@"NSMutableURLRequest");
+    Class connCls = NSClassFromString(@"NSURLConnection");
+    if (reqCls == Nil || connCls == Nil) {
+        BRERR(@"rawGet: 取不到 NSMutableURLRequest / NSURLConnection");
+        return nil;
+    }
+
+    NSURL *u = [NSURL URLWithString:url];
+    if (u == nil) return nil;
+
+    id req = [reqCls requestWithURL:u];
+    [req setTimeoutInterval:10];
+    NSDictionary *h = [self headersForUA:ua];
+    for (NSString *k in h) [req setValue:[h objectForKey:k] forHTTPHeaderField:k];
+    if ([cookie length]) [req setValue:cookie forHTTPHeaderField:@"Cookie"];
+    [self throttle];
+
+    id resp = nil;
+    NSError *err = nil;
+    NSData *d = [connCls sendSynchronousRequest:req returningResponse:&resp error:&err];
+    if (d == nil) BRERR(@"rawGet 失败 %@ (%@)", url, err);
+    return d;
 }
 
 @end
