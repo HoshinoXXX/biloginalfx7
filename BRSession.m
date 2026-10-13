@@ -26,7 +26,16 @@ static const NSTimeInterval kMinInterval = 0.12;   // 120ms
 
 static NSString *BRWorkPath(NSString *name) {
     NSFileManager *fm = [NSFileManager defaultManager];
-    NSArray *cands = [NSArray arrayWithObjects:@"/var/mobile/bilifix", @"/tmp", nil];
+    // ★ 同 BRStore：App 自己的 Documents 在沙盒内一定可写，
+    //   而 /var/mobile/bilifix 对沙盒进程是写不进去的
+    //   （isWritableFileAtPath: 只看 POSIX 权限、不看沙盒规则）。
+    //   不改的话后果是：登录后 Cookie 存不下来，下次打开又要重新登录。
+    NSString *brHome2 = NSHomeDirectory();
+    NSString *brDocs2 = brHome2 ? [brHome2 stringByAppendingPathComponent:@"Documents"] : nil;
+    NSMutableArray *cands = [NSMutableArray array];
+    if (brDocs2 != nil) [cands addObject:brDocs2];
+    [cands addObject:@"/var/mobile/bilifix"];
+    [cands addObject:@"/tmp"];
     for (NSString *d in cands) {
         BOOL isDir = NO;
         if (![fm fileExistsAtPath:d isDirectory:&isDir] || !isDir) {
