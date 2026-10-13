@@ -1,4 +1,5 @@
 #import "BRURLProtocol.h"
+#import <objc/runtime.h>
 #import "BRRouter.h"
 #import "BRSession.h"
 #import "BRLog.h"
