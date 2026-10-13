@@ -193,33 +193,49 @@ static void BRRunSelfTest(void) {
 
 #define BRDIAG(...) BRLogWrite(@"[D] " __VA_ARGS__)
 
+// ★ 改写路径会被多线程同时进入（App 请求 + warmUp 请求 + 自检），
+//   而 BRRouter/BRStore/BRSession 里有惰性初始化的共享状态 —— 必须串行化。
+//   用递归锁：万一内部又触发一次改写也不会自锁死。
+static NSRecursiveLock *gBRRewriteLock = nil;
+
+static void BRLockInit(void) {
+    if (gBRRewriteLock == nil) {
+        @synchronized ([NSObject class]) {
+            if (gBRRewriteLock == nil) gBRRewriteLock = [[NSRecursiveLock alloc] init];
+        }
+    }
+}
+
 static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
+    BRLockInit();
+    [gBRRewriteLock lock];
     @try {
-        if (req == nil) { BRDIAG(@"改写: req 为 nil"); return req; }
+        if (req == nil) { BRDIAG(@"改写: req 为 nil"); [gBRRewriteLock unlock]; return req; }
         NSString *host = [[req URL] host];
         NSString *path = [[req URL] path];
         BRDIAG(@"改写: 进入 host=%@ path=%@", host, path);
-        if (!BRIsBiliHost(host)) { BRDIAG(@"改写: host 不在名单"); return req; }
+        if (!BRIsBiliHost(host)) { BRDIAG(@"改写: host 不在名单"); [gBRRewriteLock unlock]; return req; }
 
         BRRoute *route = [BRRouter routeForRequest:req];
         BRDIAG(@"改写: 路由结果 kind=%@ url=%@ note=%@",
                route.kind, route.url ? @"有" : @"nil", route.note);
-        if (route == nil || route.url == nil) { BRDIAG(@"改写: 无路由或无上游地址"); return req; }
+        if (route == nil || route.url == nil) { BRDIAG(@"改写: 无路由或无上游地址"); [gBRRewriteLock unlock]; return req; }
 
         if (route.drop) {
             BRDBG(@"[改写] 丢弃 %@（%@）", [[req URL] path], route.note);
-            return req;   // 丢弃逻辑这一版先不动，避免行为突变
+            [gBRRewriteLock unlock];
+        return req;   // 丢弃逻辑这一版先不动，避免行为突变
         }
 
         NSMutableURLRequest *m = [req mutableCopy];
-        if (m == nil) return req;
+        if (m == nil) { [gBRRewriteLock unlock]; return req; }
 
         if ([route.url isEqualToString:[[req URL] absoluteString]]) {
             BRDIAG(@"改写: 上游地址与原地址相同，无需改");
         }
         if (![route.url isEqualToString:[[req URL] absoluteString]]) {
             NSURL *u = [NSURL URLWithString:route.url];
-            if (u == nil) return req;
+            if (u == nil) { [gBRRewriteLock unlock]; return req; }
             [m setURL:u];
             NSString *shown = route.url.length > 120
                 ? [[route.url substringToIndex:120] stringByAppendingString:@"…"]
@@ -248,9 +264,12 @@ static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
             [m setValue:nil forHTTPHeaderField:@"Cookie"];
         }
 
+        [gBRRewriteLock unlock];
+
         return m;
     } @catch (NSException *e) {
         BRERR(@"[改写] 异常: %@", [e description]);
+        [gBRRewriteLock unlock];
         return req;
     }
 }
