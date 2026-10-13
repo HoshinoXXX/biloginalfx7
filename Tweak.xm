@@ -255,7 +255,8 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
             if (BRIsBiliHost(host)) BRDBG(@"[同步] %@", [[req URL] path]);
         }
     } @catch (NSException *e) { }
-    return o_sendSync(self, _cmd, req, respOut, errOut);
+    NSURLRequest *brq = BRRewriteRequest(req);
+    return o_sendSync(self, _cmd, brq, respOut, errOut);
 }
 
 static void (*o_sendAsync)(id, SEL, NSURLRequest *, NSOperationQueue *,
