@@ -176,10 +176,13 @@ static NSString *BRNum(id v) {
         NSString *type = qs[@"type"] ?: @"1";
         NSString *pn = qs[@"pn"] ?: @"1";
         NSString *ps = qs[@"ps"] ?: @"20";
+        // ★ 用「经典」评论接口而不是 wbi/main：
+        //   wbi/main 在匿名请求下返回 -403 访问权限不足，
+        //   而经典版返回的正是老客户端期望的旧结构，连转换都可以省掉。
         NSString *base = [NSString stringWithFormat:
-            @"https://api.bilibili.com/x/v2/reply/wbi/main?oid=%@&type=%@&mode=3&pn=%@&ps=%@",
+            @"https://api.bilibili.com/x/v2/reply?oid=%@&type=%@&pn=%@&ps=%@&sort=2&nohot=0",
             oid ?: @"", type, pn, ps];
-        r.url = [BRSession wbiSignURL:base];
+        r.url = base;
         r.kind = @"reply";
         // ★ 必须完全匿名：带任何会话信息都只给 3 条评论
         //   （被判成「有会话的游客」；注意 buvid3 也算会话信息）
