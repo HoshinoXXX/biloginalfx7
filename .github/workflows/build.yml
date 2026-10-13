@@ -20,7 +20,7 @@ jobs:
           ls -la
           echo ""
           miss=0
-          for f in Makefile control B21Probe.xm B22Probe.xm B21Probe.plist B22Probe.plist BHelper.h BRLog.h BRLog.m; do
+          for f in Makefile control B23Probe.xm B23Probe.plist BHelper.h BRLog.h BRLog.m; do
             if [ ! -f "$f" ]; then
               echo "!! 缺少 $f"
               miss=1
