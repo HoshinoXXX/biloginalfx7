@@ -43,7 +43,7 @@ static NSString *BRWorkPath(NSString *name) {
     return [NSTemporaryDirectory() stringByAppendingPathComponent:name];
 }
 
-@implementation BRSession
+
 /* ==== 静态辅助函数 ==== */
 static NSString *BRRFC3986(NSString *s) {
     static NSCharacterSet *allowed = nil;
@@ -57,9 +57,7 @@ static NSString *BRRFC3986(NSString *s) {
     return e ? e : @"";
 }
 
-@implementation BRSession
-
-+ (void)bootstrap {
+@implementation BRSession+ (void)bootstrap {
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         gThrottleLock = [[NSLock alloc] init];
