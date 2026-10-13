@@ -117,7 +117,7 @@ static BOOL BRIsImageHost(NSString *host) {
     if (route.drop) {
         // 明确丢弃（例如映射丢失的假 ID，不能当真 ID 去请求）
         BRDBG(@"丢弃请求 %@（%@）", [[req URL] path], route.note);
-        NSHTTPURLResponse *r = [NSClassFromString(@"NSHTTPURLResponse") alloc]
+        NSHTTPURLResponse *r = [[NSClassFromString(@"NSHTTPURLResponse") alloc]
             initWithURL:[req URL] statusCode:200 HTTPVersion:@"HTTP/1.1"
             headerFields:@{@"Content-Type": @"application/json"}];
         NSString *body = @"{\"code\":-404,\"message\":\"not found\",\"data\":null}";
@@ -229,7 +229,7 @@ static BOOL BRIsImageHost(NSString *host) {
             if ([hdrs objectForKey:@"Content-Type"] == nil)
                 [hdrs setObject:@"application/json; charset=utf-8" forKey:@"Content-Type"];
 
-            NSHTTPURLResponse *newResp = [NSClassFromString(@"NSHTTPURLResponse") alloc]
+            NSHTTPURLResponse *newResp = [[NSClassFromString(@"NSHTTPURLResponse") alloc]
                 initWithURL:[orig URL]
                  statusCode:(code > 0 ? code : 200)
                 HTTPVersion:@"HTTP/1.1"
