@@ -40,7 +40,6 @@ jobs:
           set -e
           export THEOS=$HOME/theos
           git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
-          # theos 自带一个非空的 sdks 占位目录，必须先删掉才能 clone 真正的 SDK
           rm -rf "$THEOS/sdks"
           git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
           brew install ldid
@@ -52,29 +51,13 @@ jobs:
           SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
           TBD="$SDK/usr/lib/system/liblaunch.tbd"
 
-          # 1) 删掉 SDK 里所有对 liblaunch 的 re-export 引用，
-          #    否则链接器会顺着 re-export 去找根本不存在的 liblaunch.dylib
           grep -rl 'liblaunch' "$SDK" --include='*.tbd' 2>/dev/null | while read -r f; do
             if [ "$f" != "$TBD" ]; then
               sed -i '' '/liblaunch/d' "$f" || true
             fi
           done
 
-          # 2) 重写 liblaunch.tbd 为空 stub
-          #    target 格式必须是 <架构>-<平台>（armv7-ios），
-          #    写成 ios-armv7 会被链接器忽略，然后回头去找真实 dylib 而失败
-          cat > "$TBD" <<'TBDEOF'
---- !tapi-tbd-v2
-archs:           [ armv7 ]
-platform:        ios
-targets:         [ armv7-ios ]
-install-name:    '/usr/lib/system/liblaunch.dylib'
-current-version: 1
-compatibility-version: 1
-exports:
-  - archs:   [ armv7 ]
-    symbols: [ ]
-TBDEOF
+          printf -- '--- !tapi-tbd-v2\narchs: [ armv7 ]\nplatform: ios\ntargets: [ armv7-ios ]\ninstall-name: "/usr/lib/system/liblaunch.dylib"\ncurrent-version: 1\ncompatibility-version: 1\nexports:\n  - archs: [ armv7 ]\n    symbols: [ ]\n' > "$TBD"
 
           echo "--- liblaunch.tbd 修补完成 ---"
           cat "$TBD"
