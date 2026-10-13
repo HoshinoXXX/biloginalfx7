@@ -225,7 +225,22 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
     } @catch (NSException *e) { }
     NSURLRequest *brq = BRRewriteRequest(req);
 
-    return o_initWithRequestStart(self, _cmd, brq, delegate, startNow);
+    // ★ 需要改写响应时，把 delegate 换成代理
+    id brd = delegate;
+    @try {
+        if (delegate != nil) {
+            BRRoute *r = [BRRouter routeForRequest:req];
+            if (r != nil && r.kind != nil) {
+                BRDelegateProxy *px = [[BRDelegateProxy alloc] init];
+                px.real = delegate;
+                px.route = r;
+                brd = px;
+                BRDBG(@"[改写] 已挂响应代理（%@）", r.kind);
+            }
+        }
+    } @catch (NSException *e) { brd = delegate; }
+
+    return o_initWithRequestStart(self, _cmd, brq, brd, startNow);
 }
 
 #pragma mark - 装载
