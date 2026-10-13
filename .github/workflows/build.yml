@@ -20,7 +20,8 @@ jobs:
           ls -la
           echo ""
           miss=0
-          for f in Makefile control Tweak.xm BiloginalfX7.plist \
+          for f in Makefile control B7Probe.xm B8Probe.xm B9Probe.xm \
+                   B7Probe.plist B8Probe.plist B9Probe.plist BHelper.h \
                    BRCrypto.h BRLog.h BRLog.m BRStore.h BRStore.m \
                    BRSession.h BRSession.m BRRouter.h BRRouter.m \
                    BRURLProtocol.h BRURLProtocol.m; do
