@@ -152,7 +152,7 @@ static BOOL BRIsImageHost(NSString *host) {
                 [self finishWithError:[NSError errorWithDomain:@"BR" code:-1 userInfo:nil]];
                 return;
             }
-            NSMutableURLRequest *r = [NSMutableURLRequest requestWithURL:u];
+            NSMutableURLRequest *r = [NSClassFromString(@"NSMutableURLRequest") requestWithURL:u];
             [r setTimeoutInterval:12];
             [r setHTTPMethod:method];
             if ([body length]) [r setHTTPBody:body];
@@ -190,7 +190,11 @@ static BOOL BRIsImageHost(NSString *host) {
             NSHTTPURLResponse *resp = nil;
             NSError *err = nil;
             BRSetFetchDepth(BRFetchDepth() + 1);      // 抬起闸门
-            NSData *data = [NSURLConnection sendSynchronousRequest:marked
+            // ★ 不能用 [NSURLConnection ...] —— iOS 上它的 ObjC 类符号在
+            //   dlopen 时解析不到，会让整个 dylib 被卸载。
+            Class _brConnCls = NSClassFromString(@"NSURLConnection");
+            if (_brConnCls == Nil) { return nil; }
+            NSData *data = [_brConnCls sendSynchronousRequest:marked
                                                  returningResponse:&resp error:&err];
             BRSetFetchDepth(BRFetchDepth() - 1);      // 放下闸门
 
