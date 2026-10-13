@@ -12,7 +12,7 @@ include $(THEOS)/makefiles/common.mk
 TWEAK_NAME = B10Probe B11Probe
 B10Probe_FILES = B10Probe.xm BRLog.m BRSession_min.m
 B11Probe_FILES = B11Probe.xm BRLog.m BRSession.m
-B10Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
+B10Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incomplete-implementation
 B11Probe_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
 B10Probe_FRAMEWORKS = Foundation CoreFoundation
 B11Probe_FRAMEWORKS = Foundation CoreFoundation
