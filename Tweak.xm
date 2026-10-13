@@ -127,7 +127,7 @@ static void BRReleaseProxy(id px) {
             NSData *conv = [BRRouter convertResponse:_buf forRoute:_route];
             if (conv != nil) {
                 out = conv;
-                BRDBG(@"[改写] 响应 %@：%lu -> %lu 字节",
+                BRINFO(@"[改写] 响应 %@：%lu -> %lu 字节",
                       _route.kind ?: @"?", (unsigned long)_buf.length, (unsigned long)conv.length);
             }
         }
@@ -262,7 +262,7 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
                 px.route = r;
                 brd = px;
                 BRHoldProxy(px);   // ★ 必须强持有，否则会被提前释放
-                BRDBG(@"[改写] 已挂响应代理（%@）", r.kind);
+                BRINFO(@"[改写] 已挂响应代理（%@）", r.kind);
             }
         }
     } @catch (NSException *e) { brd = delegate; }
