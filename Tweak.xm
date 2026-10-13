@@ -191,14 +191,20 @@ static void BRRunSelfTest(void) {
     }
 }
 
+#define BRDIAG(...) BRLogWrite(@"[D] " __VA_ARGS__)
+
 static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
     @try {
-        if (req == nil) return req;
+        if (req == nil) { BRDIAG(@"改写: req 为 nil"); return req; }
         NSString *host = [[req URL] host];
-        if (!BRIsBiliHost(host)) return req;
+        NSString *path = [[req URL] path];
+        BRDIAG(@"改写: 进入 host=%@ path=%@", host, path);
+        if (!BRIsBiliHost(host)) { BRDIAG(@"改写: host 不在名单"); return req; }
 
         BRRoute *route = [BRRouter routeForRequest:req];
-        if (route == nil || route.url == nil) return req;
+        BRDIAG(@"改写: 路由结果 kind=%@ url=%@ note=%@",
+               route.kind, route.url ? @"有" : @"nil", route.note);
+        if (route == nil || route.url == nil) { BRDIAG(@"改写: 无路由或无上游地址"); return req; }
 
         if (route.drop) {
             BRDBG(@"[改写] 丢弃 %@（%@）", [[req URL] path], route.note);
@@ -208,6 +214,9 @@ static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
         NSMutableURLRequest *m = [req mutableCopy];
         if (m == nil) return req;
 
+        if ([route.url isEqualToString:[[req URL] absoluteString]]) {
+            BRDIAG(@"改写: 上游地址与原地址相同，无需改");
+        }
         if (![route.url isEqualToString:[[req URL] absoluteString]]) {
             NSURL *u = [NSURL URLWithString:route.url];
             if (u == nil) return req;
