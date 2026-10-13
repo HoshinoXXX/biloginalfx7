@@ -66,7 +66,7 @@ static BOOL BRIsImageHost(NSString *host) {
    只用来让编译器认识 self 的成员和方法签名。
    真正的类由下面的 BRURLProtocolClass() 在运行时拼装。 */
 @interface BRURLProtocolShim : NSObject
-@property (readonly) id<NSURLProtocolClient> client;
+@property (readonly) id client;   // ★ 不用协议限定，避免协议符号
 @property (readonly, copy) NSURLRequest *request;
 - (void)fetchAndDeliverURL:(id)u route:(id)r;
 - (void)finishWithError:(id)e;
@@ -80,7 +80,7 @@ static BOOL BRUPCanInit(BRURLProtocolShim *self, SEL _cmd, NSURLRequest  * reque
     if (BRFetchDepth() > 0) return NO;
 
     // ② 我们自己发出的请求 —— 放行（request 上的标记属性）
-    if ([NSURLProtocol propertyForKey:kBRInternalKey inRequest:request] != nil) return NO;
+    if ([NSClassFromString(@"NSURLProtocol") propertyForKey:kBRInternalKey inRequest:request] != nil) return NO;
 
     NSString *host = [[request URL] host];
     if (![host length]) return NO;
@@ -202,7 +202,7 @@ static void BRUPFetchAndDeliver(BRURLProtocolShim *self, SEL _cmd, NSString  * u
 
             // ★ 打标记 —— 否则会被自己的 canInitWithRequest: 再拦一次，无限递归
             NSMutableURLRequest *marked = [r mutableCopy];
-            [NSURLProtocol setProperty:@YES forKey:kBRInternalKey inRequest:marked];
+            [NSClassFromString(@"NSURLProtocol") setProperty:@YES forKey:kBRInternalKey inRequest:marked];
 
             [BRSession throttle];
             NSHTTPURLResponse *resp = nil;
