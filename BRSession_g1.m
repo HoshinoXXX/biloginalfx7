@@ -44,6 +44,19 @@ static NSString *BRWorkPath(NSString *name) {
 }
 
 @implementation BRSession+ (void)bootstrap {
+
+/* ==== 静态辅助函数（两个分组都需要）==== */
+static NSString *BRRFC3986(NSString *s) {
+    static NSCharacterSet *allowed = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{
+        NSMutableCharacterSet *cs = [NSMutableCharacterSet alphanumericCharacterSet];
+        [cs addCharactersInString:@"-._~"];
+        allowed = cs;
+    });
+    NSString *e = [s stringByAddingPercentEncodingWithAllowedCharacters:allowed];
+    return e ? e : @"";
+}
     static dispatch_once_t once;
     dispatch_once(&once, ^{
         gThrottleLock = [[NSLock alloc] init];
