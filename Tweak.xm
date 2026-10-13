@@ -161,6 +161,10 @@ static void BRRunSelfTest(void) {
             @"http://app.bilibili.com/x/v2/feed/index?build=4070&mobi_app=iphone&pn=1&ps=10",
             @"http://api.bilibili.com/x/v2/reply?type=1&oid=1&pn=1&ps=20",
             @"http://app.bilibili.com/x/v2/search?keyword=test&build=4070",
+            // ★ 番剧（bangumi 路由）
+            @"http://bangumi.bilibili.com/api/timeline_v2?type=1",
+            // ★ 播放地址（playurl 路由）
+            @"http://interface.bilibili.com/playurl?aid=2&cid=1&qn=32&platform=html5",
             nil];
 
         for (NSString *u in urls) {
