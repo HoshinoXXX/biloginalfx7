@@ -833,6 +833,16 @@ static NSString *BRStripEm(NSString *s) {
                               @"data": out, @"item": out, @"items": out,
                               @"num": @([out count])};
         BRINFO(@"[改写] feed 输出 %lu 条", (unsigned long)[out count]);
+        {
+            NSData *dbg = [self dataFromJSON:box];   // [BRDUMP]
+            if (dbg != nil) {
+                NSString *s = [[NSString alloc] initWithData:
+                    [dbg subdataWithRange:NSMakeRange(0, MIN((NSUInteger)700, [dbg length]))]
+                    encoding:NSUTF8StringEncoding];
+                BRINFO(@"[feed转换结果] %@", s ?: @"(非UTF8)");
+                return dbg;
+            }
+        }
         return [self dataFromJSON:box];
     }
 
