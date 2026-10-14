@@ -36,7 +36,11 @@ static NSArray *BRHandledHosts(void) {
               @"passport.bilibili.com", @"www.bilibili.com",
               @"account.bilibili.com", @"member.bilibili.com",
               @"api.live.bilibili.com", @"live.bilibili.com",
-              @"api.vc.bilibili.com", @"api.biliapi.net", @"api.biliapi.com"];
+              @"api.vc.bilibili.com", @"api.biliapi.net", @"api.biliapi.com",
+              // ★ 从老代理日志里发现的遗漏 host
+              @"message.bilibili.com", @"data.bilibili.com",
+              @"api.live.bilibili.com", @"live.bilibili.com",
+              @"api.bilibili.com", @"app.bilibili.com"];
     });
     return a;
 }
