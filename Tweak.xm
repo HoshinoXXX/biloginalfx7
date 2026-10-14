@@ -708,30 +708,38 @@ static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
 
 #pragma mark - ★ 登录页改造（短信验证码登录）
 
-// ★★ 两个必须遵守的原则（都来自实测崩溃）：
-//   ① 每个类必须有【独立】的原函数指针 —— 共用一对全局指针循环挂多个类，
-//      会导致第一个类的 hook 去调第三个类的原函数 → 调错方法 → 崩溃。
-//   ② 绝不在 viewDidLayoutSubviews 里干活 —— 那样会在 QuartzCore 的布局周期里
-//      被调用，触发 dyld 符号绑定失败，直接 EXC_BREAKPOINT(SIGTRAP)。
-//      改为 viewDidAppear 之后用 dispatch_after 延迟补几次。
+// ★★ 三条从实测崩溃中得出的铁律：
+//   ① 每个类必须有【独立】的原函数指针
+//      （共用全局指针循环挂多类 → 第一个类的 hook 去调第三个类的原函数 → 崩溃）
+//   ② 绝不在 viewDidLayoutSubviews 里干活
+//      （QuartzCore 布局周期内 → dyld 符号绑定失败 → EXC_BREAKPOINT）
+//   ③ 绝不用 dispatch_after / dispatch_async
+//      （libdispatch 符号在本 dylib 首次调用时绑定失败 → EXC_BREAKPOINT）
+//      一律改用 Foundation 的 performSelector:withObject:afterDelay:
+
+// 延迟回调（所有登录页类共用一个实现；用 class_addMethod 挂上去）
+static void br_relabel_now(id self, SEL _cmd) {
+    @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
+}
+
 #define BR_LOGIN_HOOK(CLS)                                                    \
     static void (*o_did_##CLS)(id, SEL, BOOL);                                \
-    static void br_apply_##CLS(id self, NSTimeInterval delay) {               \
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,                       \
-            (int64_t)(delay * NSEC_PER_SEC)),                                 \
-            dispatch_get_main_queue(), ^{                                     \
-            @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }    \
-        });                                                                   \
-    }                                                                         \
     static void h_did_##CLS(id self, SEL _cmd, BOOL a) {                      \
         if (o_did_##CLS != NULL) o_did_##CLS(self, _cmd, a);                  \
-        br_apply_##CLS(self, 0.35);                                           \
-        br_apply_##CLS(self, 1.20);                                           \
-        br_apply_##CLS(self, 2.50);                                           \
+        @try {                                                                \
+            [self performSelector:@selector(brRelabelNow)                     \
+                       withObject:nil afterDelay:0.35];                       \
+            [self performSelector:@selector(brRelabelNow)                     \
+                       withObject:nil afterDelay:1.20];                       \
+            [self performSelector:@selector(brRelabelNow)                     \
+                       withObject:nil afterDelay:2.50];                       \
+        } @catch (NSException *e) { }                                         \
     }                                                                         \
     static void br_hook_##CLS(void) {                                         \
         Class c = NSClassFromString(@#CLS);                                   \
         if (c == Nil) { BRINFO(@"没有这个类: %@", @#CLS); return; }           \
+        class_addMethod(c, @selector(brRelabelNow),                           \
+                        (IMP)&br_relabel_now, "v@:");                         \
         MSHookMessageEx(c, @selector(viewDidAppear:),                         \
             (IMP)&h_did_##CLS, (IMP *)&o_did_##CLS);                          \
         BRINFO(@"登录页已挂: %@", @#CLS);                                     \

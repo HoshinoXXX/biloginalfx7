@@ -221,14 +221,72 @@ static void BRCollectButtons(UIView *v, NSMutableArray *out) {
     for (UIView *s in [v subviews]) BRCollectButtons(s, out);
 }
 
-// ★★ 二分法最后一步：函数体只剩一行日志。
-//    - 若仍崩溃 → 崩溃不在本函数，而在 hook 机制 / dylib 本身
-//    - 若不再崩 → 崩溃在视图树遍历或那几个调用里
-static int gBRRelabelCount = 0;
+static void BRCollectTextFields(UIView *v, NSMutableArray *out) {
+    if (v == nil) return;
+    if ([v isKindOfClass:[UITextField class]]) [out addObject:v];
+    NSArray *subs = [v subviews];
+    for (NSUInteger i = 0; i < [subs count]; i++) {
+        BRCollectTextFields([subs objectAtIndex:i], out);
+    }
+}
+
+static void BRCollectButtons(UIView *v, NSMutableArray *out) {
+    if (v == nil) return;
+    if ([v isKindOfClass:[UIButton class]]) [out addObject:v];
+    NSArray *subs = [v subviews];
+    for (NSUInteger i = 0; i < [subs count]; i++) {
+        BRCollectButtons([subs objectAtIndex:i], out);
+    }
+}
+
+// 真正的改造逻辑。会被 performSelector:afterDelay: 反复调用（对付 cell 复用），
+// 所有 setter 都各自包 @try，任何异常都不会影响 App。
 void BRRelabelLoginPage(id vc) {
-    gBRRelabelCount++;
-    BRINFO(@"[登录] 改造被调用第 %d 次, class=%@", gBRRelabelCount,
-           vc ? NSStringFromClass([vc class]) : @"(nil)");
+    if (vc == nil) return;
+    @try {
+        UIView *root = [vc view];
+        if (root == nil) return;
+
+        NSMutableArray *tfs = [NSMutableArray array];
+        BRCollectTextFields(root, tfs);
+        for (NSUInteger i = 0; i < [tfs count]; i++) {
+            UITextField *tf = [tfs objectAtIndex:i];
+            @try {
+                if (i == 0) {
+                    [tf setPlaceholder:@"输入手机号"];
+                    [tf setKeyboardType:3];
+                } else if (i == 1) {
+                    [tf setPlaceholder:@"验证码"];
+                    [tf setSecureTextEntry:NO];
+                    [tf setKeyboardType:3];
+                }
+            } @catch (NSException *e) { }
+        }
+
+        NSMutableArray *btns = [NSMutableArray array];
+        BRCollectButtons(root, btns);
+        NSMutableString *titles = [NSMutableString string];
+        for (NSUInteger i = 0; i < [btns count]; i++) {
+            UIButton *b = [btns objectAtIndex:i];
+            NSString *ti = @"";
+            @try { ti = [b titleForState:0] ?: @""; } @catch (NSException *e) { }
+            if ([titles length] < 200) [titles appendFormat:@"[%@]", ti];
+            if ([ti rangeOfString:@"注册"].location != NSNotFound ||
+                [ti rangeOfString:@"註冊"].location != NSNotFound) {
+                @try {
+                    [b setTitle:@"发送验证码" forState:0];
+                    [b addTarget:[BRLoginSmsFlow shared]
+                          action:@selector(onSendCode:)
+                forControlEvents:(1 << 6)];
+                } @catch (NSException *e) { }
+            }
+        }
+        BRINFO(@"[登录] %@ 输入框=%lu 按钮=[%@]",
+               NSStringFromClass([vc class]),
+               (unsigned long)[tfs count], titles);
+    } @catch (NSException *e) {
+        BRERR(@"[登录] 改造失败: %@", [e description]);
+    }
 }
 
 @implementation BRLoginSmsFlow
