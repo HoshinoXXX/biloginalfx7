@@ -42,6 +42,24 @@ static NSString *BRNum(id v) {
     return [v description];
 }
 
+
+// ==== 照搬 5.9 参考实现的辅助函数 ====
+static NSString *BRPicFix(NSString *p) {
+    if (![p length]) return p ?: @"";
+    if ([p hasPrefix:@"//"])      return [@"https:" stringByAppendingString:p];
+    if ([p hasPrefix:@"http://"]) return [@"https://" stringByAppendingString:[p substringFromIndex:7]];
+    return p;
+}
+
+static NSString *BRFmtDuration(id d) {
+    long long v = 0;
+    if ([d respondsToSelector:@selector(longLongValue)]) v = [d longLongValue];
+    if (v <= 0) return @"0:00";
+    long long h = v / 3600, mm = (v % 3600) / 60, ss = v % 60;
+    if (h > 0) return [NSString stringWithFormat:@"%lld:%02lld:%02lld", h, mm, ss];
+    return [NSString stringWithFormat:@"%lld:%02lld", mm, ss];
+}
+
 @implementation BRRouter
 
 #pragma mark - 路由表
@@ -427,7 +445,7 @@ static NSString *BRStripEm(NSString *s) {
     // ---------- 推荐流：老客户端要 data 是数组 ----------
     // ================= 首页推荐（照搬 5.9 参考实现 feed_to_old）=================
     if ([kind isEqualToString:@"feed"]) {
-        NSDictionary *j = [self jsonFromData:data];
+        NSDictionary *j = [self jsonFromData:body];
         NSDictionary *dd = [j objectForKey:@"data"];
         NSArray *src = nil;
         if ([dd isKindOfClass:[NSDictionary class]]) {
