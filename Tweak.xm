@@ -210,7 +210,9 @@ static void BRLockInit(void) {
     }
 }
 
-static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
+// 带 route 输出的版本：同步/异步路径都需要拿到 route 才能转换响应
+static NSURLRequest *BRRewriteRequestEx(NSURLRequest *req, BRRoute **outRoute) {
+    if (outRoute) *outRoute = nil;
     BRLockInit();
     [gBRRewriteLock lock];
     @try {
@@ -223,6 +225,7 @@ static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
         BRRoute *route = [BRRouter routeForRequest:req];
         BRDIAG(@"改写: 路由结果 kind=%@ url=%@ note=%@",
                route.kind, route.url ? @"有" : @"nil", route.note);
+        if (outRoute) *outRoute = route;
         if (route == nil || route.url == nil) { BRDIAG(@"改写: 无路由或无上游地址"); [gBRRewriteLock unlock]; return req; }
 
         if (route.drop) {
@@ -278,6 +281,12 @@ static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
     }
 }
 
+// 兼容旧调用点
+static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
+    return BRRewriteRequestEx(req, NULL);
+}
+
+
 static NSData *(*o_sendSync)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
 static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
                           NSURLResponse **respOut, NSError **errOut) {
@@ -287,8 +296,28 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
             if (BRIsBiliHost(host)) BRDBG(@"[同步] %@", [[req URL] path]);
         }
     } @catch (NSException *e) { }
-    NSURLRequest *brq = BRRewriteRequest(req);
-    return o_sendSync(self, _cmd, brq, respOut, errOut);
+    BRRoute *brRoute = nil;
+    NSURLRequest *brq = BRRewriteRequestEx(req, &brRoute);
+
+    NSData *brData = o_sendSync(self, _cmd, brq, respOut, errOut);
+
+    // ★ 同步路径也要做响应改写 —— 之前漏了这一步，
+    //   导致「请求去了新接口、新结构却原样交给老客户端」（arrayValue 拿到字典返回 nil）
+    @try {
+        if (brData != nil && brRoute != nil && brRoute.kind != nil) {
+            NSUInteger before = [brData length];
+            NSData *conv = [BRRouter convertResponse:brData forRoute:brRoute];
+            if (conv != nil) {
+                BRINFO(@"[改写] 同步响应 %@：%lu -> %lu 字节",
+                       brRoute.kind, (unsigned long)before, (unsigned long)[conv length]);
+                brData = conv;
+            }
+        }
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 同步响应转换异常: %@", [e description]);
+    }
+
+    return brData;
 }
 
 static void (*o_sendAsync)(id, SEL, NSURLRequest *, NSOperationQueue *,
