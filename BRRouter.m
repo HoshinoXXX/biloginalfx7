@@ -278,6 +278,110 @@ static NSString *BRFmtDuration(id d) {
         return r;
     }
 
+        // ================= [BR_ADDED_ROUTES] 按 5.9 参考实现补齐的路由 =================
+
+    // ---- 直播：老接口已失效，统一映射到实测可用的新接口 ----
+    // ★ live 域名是 APP 签名体系，不能套 wbi（会 412）
+    if ([host hasPrefix:@"live."] || [host hasPrefix:@"api.live."]) {
+        if ([path hasPrefix:@"/AppNewIndex"] || [path hasSuffix:@"/common"] ||
+            [path isEqualToString:@"/"] ||
+            [path isEqualToString:@"/index/getList"] ||
+            [path isEqualToString:@"/x/v2/index/getList"] ||
+            [path isEqualToString:@"/mobile/rooms"] ||
+            [path isEqualToString:@"/room/v1/room/getList"] ||
+            [path isEqualToString:@"/index/getRoomList"]) {
+            NSMutableArray *keep = [NSMutableArray array];
+            for (NSString *k in @[@"platform", @"mobi_app", @"device", @"build", @"scale",
+                                  @"actionKey", @"appkey", @"ts", @"sign", @"type",
+                                  @"parent_area_id", @"area_id"]) {
+                NSString *v = qs[k];
+                if ([v length]) [keep addObject:[NSString stringWithFormat:@"%@=%@", k, v]];
+            }
+            if (![keep count])
+                [keep addObjectsFromArray:@[@"platform=web", @"mobi_app=iphone", @"device=phone"]];
+            r.url = [NSString stringWithFormat:
+                     @"https://api.live.bilibili.com/xlive/web-interface/v1/index/getList?%@",
+                     [keep componentsJoinedByString:@"&"]];
+            r.kind = @"raw";
+            r.note = @"直播列表（新接口）";
+            return r;
+        }
+        if ([path isEqualToString:@"/api/playurl"]) {
+            NSString *room = qs[@"cid"] ?: qs[@"room_id"] ?: @"";
+            r.url = [NSString stringWithFormat:
+                     @"https://api.live.bilibili.com/room/v1/Room/playUrl?cid=%@&quality=4&platform=web",
+                     room];
+            r.kind = @"raw";
+            r.note = @"直播播放地址";
+            return r;
+        }
+    }
+
+    // ---- 番剧时间表 ----
+    if ([path hasPrefix:@"/pgc/web/timeline"] || [path hasPrefix:@"/x/v2/bangumi/timeline"]) {
+        r.url = @"https://api.bilibili.com/pgc/web/timeline?types=1&before=6&after=6";
+        r.kind = @"raw";
+        r.note = @"番剧时间表";
+        return r;
+    }
+
+    // ---- 番剧详情 ----
+    if ([path hasPrefix:@"/pgc/view/"] || [path hasPrefix:@"/pgc/season/"]) {
+        NSString *sid = qs[@"season_id"], *ep = qs[@"ep_id"];
+        if ([sid length])
+            r.url = [NSString stringWithFormat:@"https://api.bilibili.com/pgc/view/web/season?season_id=%@", sid];
+        else if ([ep length])
+            r.url = [NSString stringWithFormat:@"https://api.bilibili.com/pgc/view/web/season?ep_id=%@", ep];
+        else
+            r.url = [NSString stringWithFormat:@"https://api.bilibili.com%@?%@", path, rawQuery];
+        r.kind = @"raw";
+        r.note = @"番剧详情";
+        return r;
+    }
+
+    // ---- 番剧播放地址 ----
+    if ([path isEqualToString:@"/pgc/player/api/playurl"] ||
+        [path isEqualToString:@"/pgc/player/web/playurl"] ||
+        [path isEqualToString:@"/player/playurl"]) {
+        NSString *ep = qs[@"ep_id"], *cid = qs[@"cid"], *avid = qs[@"avid"] ?: qs[@"aid"];
+        NSMutableString *u = [NSMutableString stringWithString:
+                              @"https://api.bilibili.com/pgc/player/api/playurl?"];
+        if ([ep length])   [u appendFormat:@"ep_id=%@&", ep];
+        if ([cid length])  [u appendFormat:@"cid=%@&", cid];
+        if ([avid length]) [u appendFormat:@"avid=%@&", avid];
+        [u appendString:@"fnval=0&fnver=0&fourk=0&platform=html5"];
+        r.url = u;
+        r.kind = @"playurl";
+        r.note = @"番剧播放地址";
+        return r;
+    }
+
+    // ---- 个人主页（★ 必须 wbi 签名，否则风控判 v_voucher）----
+    if ([path hasPrefix:@"/x/v2/space"] || [path hasPrefix:@"/x/space"]) {
+        NSString *mid = qs[@"mid"] ?: qs[@"vmid"] ?: @"";
+        if ([path rangeOfString:@"arc"].location != NSNotFound ||
+            [path rangeOfString:@"archive"].location != NSNotFound ||
+            [path rangeOfString:@"video"].location != NSNotFound) {
+            NSString *pn = qs[@"pn"] ?: qs[@"page"] ?: @"1";
+            NSString *ps = qs[@"ps"] ?: qs[@"pagesize"] ?: @"20";
+            NSString *b = [NSString stringWithFormat:
+                           @"https://api.bilibili.com/x/space/wbi/arc/search?mid=%@&pn=%@&ps=%@&order=pubdate",
+                           mid, pn, ps];
+            r.url = [BRSession wbiSignURL:b];
+            r.kind = @"raw";
+            r.note = @"个人主页投稿";
+            return r;
+        }
+        if ([mid length]) {
+            NSString *b = [NSString stringWithFormat:
+                           @"https://api.bilibili.com/x/space/wbi/acc/info?mid=%@", mid];
+            r.url = [BRSession wbiSignURL:b];
+            r.kind = @"nav";
+            r.note = @"个人主页信息";
+            return r;
+        }
+    }
+
     // ================= 默认：保持原 host，只补风控头 =================
     r.url = [NSString stringWithFormat:@"https://%@%@%@", host, path,
              [rawQuery length] ? [NSString stringWithFormat:@"?%@", rawQuery] : @""];
