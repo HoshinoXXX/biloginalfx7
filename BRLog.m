@@ -27,22 +27,26 @@ static BOOL BREnsureDir(NSString *d) {
 //   沙盒拒绝。所以不能假定共享目录可写，必须实际探测，并且一定要有一个
 //   「沙盒内」的兜底路径 —— App 自己的容器（NSHomeDirectory）必定可写。
 static NSString *BRLogPickPath(void) {
-    // ① 越狱共享目录（最方便 cat 查看）
+    // ★★ 顺序关键：先试「App 自己的容器」。
+    //   原因：BREnsureDir 用的是 isWritableFileAtPath:，它只看 POSIX 权限、
+    //   **不看沙盒规则** —— 于是 /var/mobile/bilifix 与 /tmp 会被误判成可写，
+    //   实际写入被沙盒静默拒绝 → 日志文件根本不会产生。
+    //   （App 沙盒里的 Documents 是实际验证过可写的：aidmap.txt 就写在那里。）
+    NSString *home = NSHomeDirectory();
+    if (home != nil && [home length] > 0) {
+        NSString *docs = [home stringByAppendingPathComponent:@"Documents"];
+        if (BREnsureDir(docs)) {
+            return [docs stringByAppendingPathComponent:@"biloginalfx7.log"];
+        }
+    }
+
+    // ② 越狱共享目录（方便 cat 查看；仅当确实可写时才会命中）
     NSArray *shared = [NSArray arrayWithObjects:
                        @"/var/mobile/bilifix",
                        @"/tmp", nil];
     for (NSString *d in shared) {
         if (BREnsureDir(d)) {
             return [d stringByAppendingPathComponent:@"biloginalfx7.log"];
-        }
-    }
-
-    // ② 沙盒内兜底：App 自己的 Documents 目录
-    NSString *home = NSHomeDirectory();
-    if (home != nil && [home length] > 0) {
-        NSString *docs = [home stringByAppendingPathComponent:@"Documents"];
-        if (BREnsureDir(docs)) {
-            return [docs stringByAppendingPathComponent:@"biloginalfx7.log"];
         }
     }
 
