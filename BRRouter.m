@@ -693,6 +693,70 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ---------- 播放地址：把 cid 换成真实值后原样返回 ----------
+    // ================= 排行榜（照搬 5.9 参考实现 rank_to_old）=================
+    if ([kind isEqualToString:@"list"]) {
+        NSDictionary *j = [self jsonFromData:body];
+        NSArray *lst = nil;
+        id dd = [j objectForKey:@"data"];
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id l = [dd objectForKey:@"list"];
+            if ([l isKindOfClass:[NSArray class]]) lst = l;
+        } else if ([dd isKindOfClass:[NSArray class]]) {
+            lst = dd;
+        }
+        NSMutableArray *items = [NSMutableArray array];
+        for (id raw in lst) {
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *r = raw;
+            NSDictionary *owner = [r objectForKey:@"owner"];
+            if (![owner isKindOfClass:[NSDictionary class]]) owner = @{};
+            NSDictionary *stat = [r objectForKey:@"stat"];
+            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
+
+            long long aidLL = 0;
+            id aidRaw = [r objectForKey:@"aid"];
+            if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+            long long fakeLL = [BRStore fakeAidForReal:aidLL];
+            NSNumber *fake = (fakeLL > 0) ? @(fakeLL) : nil;
+
+            id play = [r objectForKey:@"play"];   if (play == nil) play = [stat objectForKey:@"view"];
+            id dm   = [r objectForKey:@"danmaku"]; if (dm == nil) dm = [stat objectForKey:@"danmaku"];
+            id author = [r objectForKey:@"author"]; if (author == nil) author = [owner objectForKey:@"name"];
+            id mid    = [r objectForKey:@"mid"];    if (mid == nil) mid = [owner objectForKey:@"mid"];
+            id face   = [r objectForKey:@"face"];   if (face == nil) face = [owner objectForKey:@"face"];
+            id pts    = [r objectForKey:@"score"];  if (pts == nil) pts = [r objectForKey:@"pts"];
+            id pub    = [r objectForKey:@"pubdate"]; if (pub == nil) pub = [r objectForKey:@"ctime"];
+
+            [items addObject:@{
+                @"aid":          fake ?: @0,
+                @"bvid":         [r objectForKey:@"bvid"] ?: @"",
+                @"title":        [r objectForKey:@"title"] ?: @"",
+                @"pic":          BRPicFix([r objectForKey:@"pic"] ?: @""),
+                @"author":       author ?: @"",
+                @"mid":          mid ?: @0,
+                @"face":         BRPicFix(face ?: @""),
+                @"play":         play ?: @0,
+                @"video_review": dm ?: @0,
+                @"danmaku":      dm ?: @0,
+                @"coins":        [stat objectForKey:@"coin"] ?: @0,
+                @"favorites":    [stat objectForKey:@"favorite"] ?: @0,
+                @"like":         [stat objectForKey:@"like"] ?: @0,
+                @"reply":        [stat objectForKey:@"reply"] ?: @0,
+                @"duration":     BRFmtDuration([r objectForKey:@"duration"]),
+                @"pubdate":      pub ?: @0,
+                @"pts":          pts ?: @0,
+                @"typename":     [r objectForKey:@"tname"] ?: @"",
+                @"typeid":       [r objectForKey:@"tid"] ?: @0,
+                @"arcurl":       [NSString stringWithFormat:@"http://www.bilibili.com/video/av%lld", aidLL],
+            }];
+        }
+        NSDictionary *box = @{@"code": @0, @"message": @"0",
+                              @"data": @{@"note": @"", @"list": items, @"num": @([items count]), @"pages": @1},
+                              @"list": items, @"num": @([items count])};
+        BRINFO(@"[改写] rank 输出 %lu 条", (unsigned long)[items count]);
+        return [self dataFromJSON:box];
+    }
+
     if ([kind isEqualToString:@"playurl"]) {
         NSMutableDictionary *o = [j mutableCopy];
         NSDictionary *d = [j objectForKey:@"data"];
