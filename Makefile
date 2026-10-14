@@ -29,7 +29,7 @@ TWEAK_NAME = BiloginalfX7
 
 BiloginalfX7_FILES = Tweak.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m
 
-BiloginalfX7_CFLAGS     = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incompatible-pointer-types
+BiloginalfX7_CFLAGS     = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incompatible-pointer-types -Wno-unused-function
 BiloginalfX7_CCFLAGS    = $(WARNFLAGS) $(MINVER)
 BiloginalfX7_CXXFLAGS   = $(WARNFLAGS) $(MINVER)
 BiloginalfX7_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
