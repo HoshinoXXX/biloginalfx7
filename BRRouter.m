@@ -278,7 +278,39 @@ static NSString *BRFmtDuration(id d) {
         return r;
     }
 
-            // ================= [BR_ADDED_TAG_ROUTES] 标签 / 相关推荐 / 热搜 =================
+                // ================= [BR_UWP_REGION] 真二级分区（UWP 后门通道）=================
+    // ★ 用户要求：不要再用「拿分区名去搜索」的伪装方案，改用 UWP 专用通道。
+    //   实测 newlist 已泛化（rid=3 只返回无关推荐），而本接口返回的确实是该分区内容。
+    if ([path hasPrefix:@"/x/v2/region"] || [path hasPrefix:@"/x/v2/partition"]) {
+        NSString *rid = qs[@"rid"] ?: qs[@"tag_id"] ?: qs[@"tid"] ?: @"1";
+        NSString *pn  = qs[@"pn"] ?: qs[@"page"] ?: @"1";
+        BOOL isBangumiRid = ([rid isEqualToString:@"32"] || [rid isEqualToString:@"33"] ||
+                             [rid isEqualToString:@"153"] || [rid isEqualToString:@"13"]);
+
+        // 番剧/国创类分区内容在 PGC 系统里，newlist 恒返回 0 条
+        if (isBangumiRid) {
+            NSString *ps = qs[@"ps"] ?: qs[@"pagesize"] ?: @"20";
+            r.url = [NSString stringWithFormat:
+                     @"https://api.bilibili.com/pgc/season/index/result?st=1&order=3"
+                     @"&season_type=1&page=%@&pagesize=%@&type=1", pn, ps];
+            r.kind = @"region";
+            r.note = @"番剧类分区（PGC 索引）";
+            return r;
+        }
+
+        // ★ 真二级分区：UWP 通道
+        long long ts = (long long)[[NSDate date] timeIntervalSince1970];
+        r.url = [NSString stringWithFormat:
+                 @"https://app.bilibili.com/x/v2/region/dynamic/child"
+                 @"?build=3500&channel=bilih5&mobi_app=win&platform=2"
+                 @"&rid=%@&tag_id=0&ts=%lld", rid, ts];
+        r.kind = @"region";
+        r.extra = @{@"uwp": @YES, @"pn": pn, @"rid": rid};
+        r.note = @"二级分区（UWP 真通道）";
+        return r;
+    }
+
+    // ================= [BR_ADDED_TAG_ROUTES] 标签 / 相关推荐 / 热搜 =================
 
     // ---- 视频相关推荐（★ 老 x/v2/related 已失效 → 「有的視頻不見了」）----
     if ([path isEqualToString:@"/x/v2/related"] ||
@@ -709,6 +741,62 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ---------- 伪二级分区（搜索结果 → 分区结构）----------
+    // [BR_UWP_REGION] UWP dynamic/child 的响应结构（data.new[]，字段名完全不同）
+    if ([kind isEqualToString:@"region"] && [route.extra[@"uwp"] boolValue]) {
+        NSDictionary *j = [self jsonFromData:body];
+        NSArray *src = nil;
+        id dd = [j objectForKey:@"data"];
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id nw = [dd objectForKey:@"new"];
+            if ([nw isKindOfClass:[NSArray class]]) src = nw;
+            else {
+                id a = [dd objectForKey:@"archives"];
+                if ([a isKindOfClass:[NSArray class]]) src = a;
+            }
+        }
+        NSMutableArray *items = [NSMutableArray array];
+        for (id raw in src) {
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *it = raw;
+            // ★ aid 放在 param 字段里
+            long long aidLL = 0;
+            id aidRaw = [it objectForKey:@"param"];
+            if (aidRaw == nil) aidRaw = [it objectForKey:@"aid"];
+            if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+            long long fakeLL = [BRStore fakeAidForReal:aidLL];
+            NSNumber *fake = (fakeLL > 0) ? @(fakeLL) : nil;
+            id dm = [it objectForKey:@"danmaku"];
+
+            [items addObject:@{
+                @"aid":          fake ?: @0,
+                @"bvid":         [it objectForKey:@"bvid"] ?: @"",
+                @"title":        [it objectForKey:@"title"] ?: @"",
+                @"pic":          BRPicFix([it objectForKey:@"cover"] ?: [it objectForKey:@"pic"] ?: @""),
+                @"description":  [it objectForKey:@"desc"] ?: @"",
+                @"author":       [it objectForKey:@"name"] ?: [it objectForKey:@"author"] ?: @"",
+                @"face":         BRPicFix([it objectForKey:@"face"] ?: @""),
+                @"mid":          [it objectForKey:@"mid"] ?: @0,
+                @"play":         [it objectForKey:@"play"] ?: @0,
+                @"video_review": dm ?: @0,
+                @"danmaku":      dm ?: @0,
+                @"review":       [it objectForKey:@"reply"] ?: @0,
+                @"favorites":    [it objectForKey:@"favourite"] ?: @0,
+                @"duration":     [it objectForKey:@"duration"] ?: @"",
+                @"create":       [it objectForKey:@"pubdate"] ?: @"",
+                @"typename":     [it objectForKey:@"rname"] ?: @"",
+                @"rid":          [it objectForKey:@"rid"] ?: @0,
+            }];
+        }
+        NSString *pnS = route.extra[@"pn"] ?: @"1";
+        NSDictionary *box = @{@"code": @0, @"message": @"0",
+                              @"data": @{@"archives": items, @"list": items,
+                                         @"num": @([items count]), @"page": @([pnS intValue]),
+                                         @"size": ([items count] ? @([items count]) : @20)},
+                              @"list": items};
+        BRINFO(@"[改写] UWP真分区输出 %lu 条 (rid=%@)", (unsigned long)[items count], route.extra[@"rid"] ?: @"?");
+        return [self dataFromJSON:box];
+    }
+
     // ================= 分区（照搬 5.9 参考实现 region_to_old / search_to_region）===
     // ★ 老 App 从 data.archives[] 取列表，并且**必须给 page / size**
     //   否则分页算不出来 → 排版错乱（用户实测反馈）。
