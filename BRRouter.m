@@ -856,7 +856,30 @@ static NSString *BRStripEm(NSString *s) {
         // ★ 容器：data / item / items 三个键都要给同一个数组
         NSDictionary *box = @{@"code": @0, @"message": @"0",
                               @"data": out, @"item": out, @"items": out,
-                              @"num": @([out count])};
+                              @"num": @([out count])}
+
+        // ★★★ 关键修正：首页是**卡片数组**，不是视频数组。
+        //   依据：App 自带的 home_init/config（用户也确认：
+        //   「首頁綜合推薦卡片 6 個視頻，然後會有各有 4 個視頻的分區推薦」）：
+        //     {"code":0,"data":[
+        //        {"type":"recommend","style":"medium","title":"热门焦点",
+        //         "body":[6 个视频]}, ...
+        //     ]}
+        //   之前直接输出扁平视频数组 → App 在 data[0] 里找不到 type/body → 整页空白。
+        {
+            NSDictionary *recCard = @{
+                @"type":  @"recommend",
+                @"style": @"medium",
+                @"title": @"热门焦点",
+                @"param": @"",
+                @"body":  out
+            };
+            NSMutableDictionary *fixed = [NSMutableDictionary dictionaryWithDictionary:box];
+            [fixed setObject:@[recCard] forKey:@"data"];
+            BRINFO(@"[改写] feed 已包成卡片数组（1 张推荐卡，body %lu 条）",
+                   (unsigned long)[out count]);
+            box = fixed;
+        };
         BRINFO(@"[改写] feed 输出 %lu 条", (unsigned long)[out count]);
         {
             NSData *dbg = [self dataFromJSON:box];   // [BRDUMP]
