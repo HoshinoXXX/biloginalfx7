@@ -664,11 +664,58 @@ static NSString *BRStripEm(NSString *s) {
     return o;
 }
 
+
+// ★★★ ID 虚拟化：递归把 JSON 里的 aid/avid 换成 ≤int32 的假 ID。
+//   与结构转换无关，必须永远生效 —— 否则老客户端 int32 溢出，
+//   表现为「点进去串到别的视频」或「视频找不到了」。
+//   只动 aid/avid；cid 交给各转换器处理（避免影响弹幕取用）。
++ (id)virtualizeAids:(id)obj {
+    if ([obj isKindOfClass:[NSArray class]]) {
+        NSMutableArray *a = [NSMutableArray arrayWithCapacity:[obj count]];
+        for (id v in (NSArray *)obj) {
+            id nv = [self virtualizeAids:v];
+            [a addObject:(nv ?: [NSNull null])];
+        }
+        return a;
+    }
+    if ([obj isKindOfClass:[NSDictionary class]]) {
+        NSMutableDictionary *d = [NSMutableDictionary dictionaryWithCapacity:[obj count]];
+        for (id k in (NSDictionary *)obj) {
+            id v = [(NSDictionary *)obj objectForKey:k];
+            if ([k isKindOfClass:[NSString class]] &&
+                ([k isEqualToString:@"aid"] || [k isEqualToString:@"avid"])) {
+                long long ll = 0;
+                if ([v respondsToSelector:@selector(longLongValue)]) ll = [v longLongValue];
+                if (ll > 0) {
+                    long long f = [BRStore fakeAidForReal:ll];
+                    if (f > 0) v = @(f);
+                }
+            } else {
+                id nv = [self virtualizeAids:v];
+                if (nv != nil) v = nv;
+            }
+            [d setObject:(v ?: [NSNull null]) forKey:k];
+        }
+        return d;
+    }
+    return obj;
+}
+
 + (NSData *)convertResponse:(NSData *)body forRoute:(BRRoute *)route {
     // ★★★ 转换器开关（细粒度）：
     //   /tmp/br-noconv         关全部
     //   /tmp/br-noconv-<kind>  只关某一类（feed/search/rank/view/region/playurl）
     //   这样不重新编译就能逐个验证是哪个转换器的问题。
+    // ★ 先做 ID 虚拟化（与结构无关，永远生效，防止 int32 溢出）
+    {
+        NSDictionary *jj = [self jsonFromData:body];
+        if (jj != nil) {
+            id v = [BRRouter virtualizeAids:jj];
+            NSData *vd = [self dataFromJSON:v];
+            if (vd != nil) body = vd;
+        }
+    }
+
     {
         if (BRConvOff(route.kind)) {
             BRDBG(@"[改写] 转换器被开关禁用: %@", route.kind);
