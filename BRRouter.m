@@ -653,10 +653,19 @@ static NSString *BRStripEm(NSString *s) {
 }
 
 + (NSData *)convertResponse:(NSData *)body forRoute:(BRRoute *)route {
-    // ★★★ 总开关：转换器产出的结构客户端解析不了时，用这个一键回退到「只改请求不改响应」。
-    //   存在 /tmp/br-noconv 时，所有响应原样返回（插件只做请求改写）。
-    if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noconv"]) {
-        return body;
+    // ★★★ 转换器开关（细粒度）：
+    //   /tmp/br-noconv         关全部
+    //   /tmp/br-noconv-<kind>  只关某一类（feed/search/rank/view/region/playurl）
+    //   这样不重新编译就能逐个验证是哪个转换器的问题。
+    {
+        NSFileManager *fm = [NSFileManager defaultManager];
+        if ([fm fileExistsAtPath:@"/tmp/br-noconv"]) return body;
+        NSString *kd = [route.kind length]
+            ? [NSString stringWithFormat:@"/tmp/br-noconv-%@", route.kind] : nil;
+        if (kd != nil && [fm fileExistsAtPath:kd]) {
+            BRDBG(@"[改写] 转换器被开关禁用: %@", route.kind);
+            return body;
+        }
     }
 
     NSString *kind = route.kind;
