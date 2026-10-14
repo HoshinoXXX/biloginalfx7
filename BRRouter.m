@@ -60,6 +60,18 @@ static NSString *BRFmtDuration(id d) {
     return [NSString stringWithFormat:@"%lld:%02lld", mm, ss];
 }
 
+
+// 判断某类转换器是否被开关禁用（全局 /tmp/br-noconv 或 per-kind /tmp/br-noconv-<kind>）
+static BOOL BRConvOff(NSString *kind) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:@"/tmp/br-noconv"]) return YES;
+    if ([kind length]) {
+        NSString *p = [NSString stringWithFormat:@"/tmp/br-noconv-%@", kind];
+        if ([fm fileExistsAtPath:p]) return YES;
+    }
+    return NO;
+}
+
 @implementation BRRouter
 
 #pragma mark - 路由表
@@ -300,7 +312,7 @@ static NSString *BRFmtDuration(id d) {
 
         // ★ 开关回退：转换器被禁用时，UWP 通道的 data.new[] 没法转换，
         //   分区会彻底空白；改走 newlist（响应原生就是 archives[]）。
-        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noconv"]) {  // [BR_NOCONV_FALLBACK]
+        if (BRConvOff(@"region")) {  // [BR_NOCONV_FALLBACK]
             NSString *ps = qs[@"ps"] ?: qs[@"pagesize"] ?: @"20";
             r.url = [NSString stringWithFormat:
                      @"https://api.bilibili.com/x/web-interface/newlist?rid=%@&pn=%@&ps=%@",
@@ -522,7 +534,7 @@ static NSString *BRFmtDuration(id d) {
     if ([tag length]) {
         // ★ 开关回退：转换器禁用时，搜索结果转不成二级分区结构 → 空白。
         //   改走 newlist（响应原生就是 archives[]）。
-        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noconv"]) {
+        if (BRConvOff(@"region")) {
             r.url = [NSString stringWithFormat:
                 @"https://api.bilibili.com/x/web-interface/newlist?rid=%@&pn=%@&ps=%@&tag_name=%@",
                 rid, pn, ps, tag];
@@ -549,7 +561,7 @@ static NSString *BRFmtDuration(id d) {
     // ★★ 开关回退：转换器被禁用（/tmp/br-noconv）时，UWP 通道的 data.new[]
     //    没有任何东西能把它转成老客户端认的结构 → 分区彻底空白。
     //    这时改走 newlist —— 它的响应原生就是 archives[]，不转换也能显示。
-    if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noconv"]) {
+    if (BRConvOff(@"region")) {
         r.url = [NSString stringWithFormat:
             @"https://api.bilibili.com/x/web-interface/newlist?rid=%@&pn=%@&ps=%@",
             rid, pn, ps];
@@ -658,11 +670,7 @@ static NSString *BRStripEm(NSString *s) {
     //   /tmp/br-noconv-<kind>  只关某一类（feed/search/rank/view/region/playurl）
     //   这样不重新编译就能逐个验证是哪个转换器的问题。
     {
-        NSFileManager *fm = [NSFileManager defaultManager];
-        if ([fm fileExistsAtPath:@"/tmp/br-noconv"]) return body;
-        NSString *kd = [route.kind length]
-            ? [NSString stringWithFormat:@"/tmp/br-noconv-%@", route.kind] : nil;
-        if (kd != nil && [fm fileExistsAtPath:kd]) {
+        if (BRConvOff(route.kind)) {
             BRDBG(@"[改写] 转换器被开关禁用: %@", route.kind);
             return body;
         }
