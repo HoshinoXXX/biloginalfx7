@@ -25,6 +25,7 @@
 #import <objc/runtime.h>
 #import <substrate.h>
 
+#import "BRCrypto.h"
 #import "BRLog.h"
 #import "BRStore.h"
 #import "BRSession.h"
@@ -215,6 +216,136 @@ static void BRLockInit(void) {
 }
 
 // 带 route 输出的版本：同步/异步路径都需要拿到 route 才能转换响应
+
+#pragma mark - ★ 登录请求参数补齐 + 重签（照搬 5.9 参考实现）
+
+#define BR_LOGIN_APPKEY  @"dfca71928277209b"
+#define BR_LOGIN_APPSEC  @"b5475a8825547a4fc26c7d518eaaa02e"
+#define BR_LOGIN_BUILD   @"2001100"
+#define BR_LOGIN_STATS   @"{\"appId\":5,\"platform\":3,\"version\":\"2.0.1\",\"abtest\":\"\"}"
+
+// 把 query 拆成有序的键值对（保留原始未解码值）
+static NSArray *BRQueryPairs(NSString *q) {
+    NSMutableArray *out = [NSMutableArray array];
+    if (![q length]) return out;
+    for (NSString *part in [q componentsSeparatedByString:@"&"]) {
+        if (![part length]) continue;
+        NSRange r = [part rangeOfString:@"="];
+        if (r.location == NSNotFound) [out addObject:@[part, @""]];
+        else [out addObject:@[[part substringToIndex:r.location],
+                              [part substringFromIndex:r.location + 1]]];
+    }
+    return out;
+}
+
+static NSString *BRURLDecode(NSString *s) {
+    return [s stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding] ?: s;
+}
+
+// 返回补齐后的 query；不该处理时返回 nil
+static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *buvid) {
+    @try {
+        NSString *low = [path lowercaseString];
+        if ([low rangeOfString:@"login"].location == NSNotFound &&
+            [low rangeOfString:@"sms"].location == NSNotFound &&
+            [low rangeOfString:@"oauth"].location == NSNotFound) return nil;
+
+        // ★ 精确区分：发验证码 vs 短信登录
+        BOOL isSmsSend  = ([low rangeOfString:@"/sms/send"].location != NSNotFound) ||
+                          [low hasSuffix:@"/send"];
+        BOOL isSmsLogin = ([low rangeOfString:@"/login/sms"].location != NSNotFound) ||
+                          (([low rangeOfString:@"/login"].location != NSNotFound) && !isSmsSend);
+
+        NSMutableDictionary *kv = [NSMutableDictionary dictionary];
+        NSMutableArray *order = [NSMutableArray array];
+        for (NSArray *pr in BRQueryPairs(query)) {
+            NSString *k = pr[0], *v = BRURLDecode(pr[1]);
+            if (![kv objectForKey:k]) [order addObject:k];
+            [kv setObject:v forKey:k];
+        }
+
+        void (^setIfEmpty)(NSString *, NSString *) = ^(NSString *k, NSString *v) {
+            if (![kv objectForKey:k] || ![[kv objectForKey:k] length]) {
+                if (![kv objectForKey:k]) [order addObject:k];
+                [kv setObject:v forKey:k];
+            }
+        };
+
+        // ---- 公共字段 ----
+        setIfEmpty(@"build", BR_LOGIN_BUILD);
+        setIfEmpty(@"c_locale", @"zh_CN");
+        setIfEmpty(@"s_locale", @"zh_CN");
+        setIfEmpty(@"channel", @"master");
+        setIfEmpty(@"cid", @"86");
+        setIfEmpty(@"disable_rcmd", @"0");
+        setIfEmpty(@"mobi_app", @"android_hd");
+        setIfEmpty(@"platform", @"android");
+        setIfEmpty(@"statistics", BR_LOGIN_STATS);
+
+        if ([buvid length]) {
+            setIfEmpty(@"buvid", buvid);
+            setIfEmpty(@"local_id", buvid);
+            setIfEmpty(@"bili_local_id", buvid);
+            setIfEmpty(@"device_id", buvid);
+        }
+
+        // ---- 发验证码专属 ----
+        if (isSmsSend && [buvid length]) {
+            long long ms = (long long)([[NSDate date] timeIntervalSince1970] * 1000.0);
+            NSString *seed = [NSString stringWithFormat:@"%@%lld", buvid, ms];
+            NSData *sd = [seed dataUsingEncoding:NSUTF8StringEncoding];
+            unsigned char dg[16];
+            if (BRCCMD5(sd.bytes, (unsigned int)sd.length, dg) != NULL) {
+                NSMutableString *h = [NSMutableString string];
+                for (int i = 0; i < 16; i++) [h appendFormat:@"%02x", dg[i]];
+                setIfEmpty(@"login_session_id", h);
+                BRINFO(@"[登录] 发验证码已补 login_session_id");
+            }
+        }
+
+        // ---- 短信登录专属 ----
+        if (isSmsLogin) {
+            setIfEmpty(@"device", @"phone");
+            setIfEmpty(@"device_name", @"vivo");
+            setIfEmpty(@"device_platform", @"Android14vivo");
+            setIfEmpty(@"from_pv", @"main.my-information.my-login.0.click");
+            BRINFO(@"[登录] 短信登录已补 device/from_pv");
+        }
+
+        // ---- 重签：去掉 appkey/sign，追加有效 appkey，按 key 排序 ----
+        NSMutableArray *keys = [NSMutableArray array];
+        for (NSString *k in order)
+            if (![k isEqualToString:@"appkey"] && ![k isEqualToString:@"sign"])
+                [keys addObject:k];
+        [keys addObject:@"appkey"];
+        [keys sortUsingSelector:@selector(compare:)];
+
+        NSMutableArray *rawPairs = [NSMutableArray array];
+        NSMutableArray *outPairs = [NSMutableArray array];
+        for (NSString *k in keys) {
+            NSString *v = [k isEqualToString:@"appkey"] ? BR_LOGIN_APPKEY : [kv objectForKey:k];
+            if (v == nil) v = @"";
+            [rawPairs addObject:[NSString stringWithFormat:@"%@=%@", k, v]];
+            [outPairs addObject:[NSString stringWithFormat:@"%@=%@",
+                                 k, [v stringByAddingPercentEscapesUsingEncoding:NSUTF8StringEncoding] ?: v]];
+        }
+        NSString *raw = [rawPairs componentsJoinedByString:@"&"];
+        NSString *signSeed = [raw stringByAppendingString:BR_LOGIN_APPSEC];
+        NSData *sd2 = [signSeed dataUsingEncoding:NSUTF8StringEncoding];
+        unsigned char dg2[16];
+        if (BRCCMD5(sd2.bytes, (unsigned int)sd2.length, dg2) == NULL) return nil;
+        NSMutableString *sign = [NSMutableString string];
+        for (int i = 0; i < 16; i++) [sign appendFormat:@"%02x", dg2[i]];
+        [outPairs addObject:[NSString stringWithFormat:@"sign=%@", sign]];
+
+        BRINFO(@"[登录] 已补齐并重签 %@（%@）", path, isSmsSend ? @"发验证码" : (isSmsLogin ? @"短信登录" : @"其他"));
+        return [outPairs componentsJoinedByString:@"&"];
+    } @catch (NSException *e) {
+        BRERR(@"[登录] 处理异常: %@", [e description]);
+        return nil;
+    }
+}
+
 static NSURLRequest *BRRewriteRequestEx(NSURLRequest *req, BRRoute **outRoute) {
     if (outRoute) *outRoute = nil;
     BRLockInit();
@@ -225,6 +356,27 @@ static NSURLRequest *BRRewriteRequestEx(NSURLRequest *req, BRRoute **outRoute) {
         NSString *path = [[req URL] path];
         BRDIAG(@"改写: 进入 host=%@ path=%@", host, path);
         if (!BRIsBiliHost(host)) { BRDIAG(@"改写: host 不在名单"); [gBRRewriteLock unlock]; return req; }
+
+        // ★ 登录/验证码请求：补齐新接口要求的参数并重签
+        @try {
+            NSString *low = [path lowercaseString];
+            if ([low rangeOfString:@"login"].location != NSNotFound ||
+                [low rangeOfString:@"sms"].location != NSNotFound ||
+                [low rangeOfString:@"oauth"].location != NSNotFound) {
+                NSString *nq = BREnhanceLoginQuery(path, [[req URL] query], [BRSession buvid3]);
+                if ([nq length]) {
+                    NSString *base = [NSString stringWithFormat:@"%@://%@%@",
+                                      [[req URL] scheme], host, path];
+                    NSURL *nu = [NSURL URLWithString:[base stringByAppendingFormat:@"?%@", nq]];
+                    if (nu) {
+                        NSMutableURLRequest *nm = [req mutableCopy];
+                        [nm setURL:nu];
+                        [gBRRewriteLock unlock];
+                        return nm;
+                    }
+                }
+            }
+        } @catch (NSException *e) { BRERR(@"[登录] 包装异常: %@", [e description]); }
 
         BRRoute *route = [BRRouter routeForRequest:req];
         BRDIAG(@"改写: 路由结果 kind=%@ url=%@ note=%@",
