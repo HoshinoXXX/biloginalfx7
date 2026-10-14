@@ -128,24 +128,30 @@ static NSData *BRRegionHttpGet(NSString *url) {
 + (NSArray *)fetchRegionVideos:(NSString *)rid count:(NSUInteger)want {
     NSMutableArray *out = [NSMutableArray array];
     @try {
+        // ★ 一级分区用经典 newlist（自检实测返回 archives[] 正常）。
+        //   注意：UWP 的 dynamic/child 是【二级】分区用的，层级不同，别混用。
         NSString *url = [NSString stringWithFormat:
-            @"https://app.bilibili.com/x/v2/region/dynamic/child"
-            @"?build=6180000&channel=bilih5&mobi_app=win&platform=win"
-            @"&rid=%@&tag_id=0&ts=%lld",
-            rid, (long long)[[NSDate date] timeIntervalSince1970]];
+            @"https://api.bilibili.com/x/web-interface/newlist"
+            @"?rid=%@&pn=1&ps=%lu&order=0&build=4070&mobi_app=iphone"
+            @"&platform=ios&device=phone&appkey=27eb53fc9058f8c3&ts=%lld",
+            rid, (unsigned long)want,
+            (long long)[[NSDate date] timeIntervalSince1970]];
         NSData *d = BRRegionHttpGet(url);
         if (d == nil || [d length] < 20) return out;
         id j = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
         if (![j isKindOfClass:[NSDictionary class]]) return out;
         id data = [j objectForKey:@"data"];
         if (![data isKindOfClass:[NSDictionary class]]) return out;
-        id arr = [data objectForKey:@"new"];
+        // newlist 返回 data.archives[]；也兼容 UWP 的 data.new[]
+        id arr = [data objectForKey:@"archives"];
+        if (![arr isKindOfClass:[NSArray class]]) arr = [data objectForKey:@"new"];
+        if (![arr isKindOfClass:[NSArray class]]) arr = [data objectForKey:@"item"];
         if (![arr isKindOfClass:[NSArray class]]) return out;
 
         for (id it in arr) {
             if ([out count] >= want) break;
             if (![it isKindOfClass:[NSDictionary class]]) continue;
-            id aidRaw = [it objectForKey:@"param"] ?: [it objectForKey:@"aid"];
+            id aidRaw = [it objectForKey:@"aid"] ?: [it objectForKey:@"param"];
             id cidRaw = [it objectForKey:@"cid"];
             if (aidRaw == nil) continue;
             // ★ 注意：BRStore 这两个方法返回的是 long long，不是 NSNumber*
@@ -1003,7 +1009,8 @@ static NSString *BRStripEm(NSString *s) {
             //   用户反馈「首页划不下去，只有推荐那 6 个」——
             //   因为 App 期望首页一次返回所有卡片（推荐 + 各分区），
             //   而现代接口只给视频列表，所以由插件自己补齐。
-            NSArray *rids = @[@"4", @"3", @"36", @"5", @"119", @"160"];
+            // ★ 一级分区（首页分区卡片用这些）
+            NSArray *rids = @[@"1", @"13", @"3", @"4", @"36", @"5", @"119", @"160"];
             for (NSString *r in rids) {
                 @try {
                     NSArray *vs = [BRRouter fetchRegionVideos:r count:4];
