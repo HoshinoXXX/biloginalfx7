@@ -708,6 +708,16 @@ static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
 
 #pragma mark - ★ 登录页改造（短信验证码登录）
 
+
+// ★ 登录页的输入框在 UITableViewCell 里，cellForRowAtIndexPath 会反复重置
+//   placeholder，把我们在 viewDidAppear 里的修改覆盖掉。
+//   所以在 viewDidLayoutSubviews（频繁触发）里反复应用。
+static void (*o_loginVCLayout)(id, SEL);
+static void h_loginVCLayout(id self, SEL _cmd) {
+    if (o_loginVCLayout != NULL) o_loginVCLayout(self, _cmd);
+    @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
+}
+
 static void (*o_loginVCDidAppear)(id, SEL, BOOL);
 static void h_loginVCDidAppear(id self, SEL _cmd, BOOL animated) {
     // ★ 必须先判 NULL：若该类自己没实现 viewDidAppear:（从父类继承），
@@ -826,11 +836,17 @@ static void h_mineVCDidAppear(id self, SEL _cmd, BOOL animated) {
                     if (lc != Nil) {
                         MSHookMessageEx(lc, @selector(viewDidAppear:),
                             (IMP)&h_loginVCDidAppear, (IMP *)&o_loginVCDidAppear);
+                        MSHookMessageEx(lc, @selector(viewDidLayoutSubviews),
+                            (IMP)&h_loginVCLayout, (IMP *)&o_loginVCLayout);
                         BRINFO(@"登录页已挂: %@", cn);
                     }
                 }
                 for (NSString *cn in @[@"BBPhoneMineViewController",
-                                       @"BBPhoneUserCenterViewController"]) {
+                                       @"BBPhoneUserCenterViewController",
+                                       @"BBPhoneMyViewController",
+                                       @"BBPhoneMinePageViewController",
+                                       @"BBPhoneProfileViewController",
+                                       @"BBPhoneAccountViewController"]) {
                     Class mc = NSClassFromString(cn);
                     if (mc != Nil) {
                         MSHookMessageEx(mc, @selector(viewDidAppear:),
