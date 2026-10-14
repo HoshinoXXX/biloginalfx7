@@ -619,6 +619,12 @@ static NSString *BRStripEm(NSString *s) {
 }
 
 + (NSData *)convertResponse:(NSData *)body forRoute:(BRRoute *)route {
+    // ★★★ 总开关：转换器产出的结构客户端解析不了时，用这个一键回退到「只改请求不改响应」。
+    //   存在 /tmp/br-noconv 时，所有响应原样返回（插件只做请求改写）。
+    if ([[NSFileManager defaultManager] fileExistsAtPath:@/tmp/br-noconv]) {
+        return body;
+    }
+
     NSString *kind = route.kind;
     if ([kind isEqualToString:@"danmaku"] || [kind isEqualToString:@"raw"]) return body;
 
