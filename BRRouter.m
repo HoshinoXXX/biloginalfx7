@@ -74,6 +74,30 @@ static BOOL BRConvOff(NSString *kind) {
 
 
 
+
+// 分区名映射 —— 取自 App 自带的 tidMetaV2.json（含常见一级分区）
+static NSString *BRRegionNameForRid(NSString *rid) {
+    static NSDictionary *m = nil;
+    if (m == nil) {
+        m = @{
+            @"1":@"动画", @"13":@"番剧", @"167":@"国创", @"3":@"音乐", @"129":@"舞蹈",
+            @"4":@"游戏", @"36":@"科技", @"188":@"数码", @"5":@"娱乐", @"119":@"鬼畜",
+            @"155":@"时尚", @"160":@"生活", @"168":@"影视", @"181":@"影视",
+            @"211":@"美食", @"217":@"动物圈", @"223":@"汽车", @"234":@"运动",
+            @"249":@"生活兴趣", @"25":@"MAD·AMV", @"26":@"MMD·3D", @"27":@"综合",
+            @"17":@"单机联机", @"65":@"网络游戏", @"60":@"电子竞技", @"136":@"音游",
+            @"19":@"Mugen", @"121":@"GMV", @"31":@"翻唱", @"30":@"VOCALOID·UTAU",
+            @"59":@"演奏", @"130":@"音乐选集", @"153":@"国产动画",
+            @"124":@"趣味科普人文", @"122":@"野生技术协会", @"96":@"军事",
+            @"95":@"数码", @"98":@"机械",
+            @"171":@"电子竞技", @"172":@"手机游戏", @"173":@"桌游棋牌",
+            @"174":@"GMV", @"175":@"音游", @"71":@"综艺", @"137":@"明星综合"
+        };
+    }
+    NSString *n = [m objectForKey:(rid ?: @"")];
+    return n ?: [NSString stringWithFormat:@"分区%@", rid ?: @"?"];
+}
+
 @implementation BRRouter
 
 // 把真实 cid 换成假 cid（防 int32 溢出），并记住 cid->aid 反查
@@ -1053,11 +1077,25 @@ static NSString *BRStripEm(NSString *s) {
             }
             if ([regItems isKindOfClass:[NSArray class]]) {
                 NSString *rtitle = route.note ?: @"推荐";
+                // ★ 从改写后的 URL 里取出 rid（各分区卡片是单独请求的）
+                NSString *rid2 = @"";
+                @try {
+                    NSString *u = route.url ?: @"";
+                    NSRange rr = [u rangeOfString:@"rid="];
+                    if (rr.location != NSNotFound) {
+                        NSString *rest = [u substringFromIndex:rr.location + 4];
+                        NSRange amp = [rest rangeOfString:@"&"];
+                        rid2 = (amp.location == NSNotFound) ? rest
+                                                            : [rest substringToIndex:amp.location];
+                    }
+                } @catch (NSException *e) { }
+                // title 用真实分区名（App 自带 tidMetaV2.json 的映射）
+                NSString *showTitle = [rid2 length] ? BRRegionNameForRid(rid2) : rtitle;
                 NSDictionary *rc = @{
                     @"type":  @"recommend",
                     @"style": @"medium",
-                    @"title": rtitle,
-                    @"param": @"",
+                    @"title": showTitle,
+                    @"param": rid2,
                     @"body":  regItems
                 };
                 NSMutableDictionary *fx = [NSMutableDictionary dictionaryWithDictionary:box];
