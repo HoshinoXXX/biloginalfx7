@@ -842,7 +842,16 @@ static void br_hook_login_vcs(void) {
                 //   之前循环挂 3 个类，而 o_loginVCDidAppear / o_loginVCLayout
                 //   是**全局变量**，每挂一次就被覆盖 → 第一个类的 hook
                 //   会去调第三个类的原函数 → 调错方法 → 崩溃。
-                br_hook_login_vcs();
+                // ★★★ 登录 UI hook 默认【关闭】。
+                //   实测结论：这个 2014 年的 App 在 iOS 7 上 VC 层级特殊，
+                //   任何形式的 UI hook（无论挂哪个类、哪种方式）都会导致
+                //   「进入登录页 3 秒后崩溃」或「点输入框崩溃」。
+                //   因此改为显式开关：只有 /tmp/br-loginui 存在时才挂。
+                if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-loginui"]) {
+                    br_hook_login_vcs();
+                } else {
+                    BRINFO(@"登录 UI hook 默认关闭（稳定优先）");
+                }
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");
