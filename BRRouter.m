@@ -1032,6 +1032,41 @@ static NSString *BRStripEm(NSString *s) {
                                          @"page": @1, @"size": ([items count] ? @([items count]) : @20)},
                               @"list": items, @"archives": items};
         BRINFO(@"[改写] region 输出 %lu 条（含 page/size）", (unsigned long)[items count]);
+
+        // [BRREGIONCARD] ★ 分区推荐卡片也要用「卡片数组」结构。
+        //   依据：首页 6 个推荐视频用卡片数组后已正常显示，而分区卡片仍是空白，
+        //   且 App 自带 home_init/config 里分区卡片的形状是：
+        //     {"param":"13","type":"bangumi","style":"medium",
+        //      "title":"番剧推荐","body":[4 个视频]}
+        //   这里把同一批视频也包成一张卡片，并把 data 换成卡片数组。
+        @try {
+            NSArray *regItems = nil;
+            if ([items isKindOfClass:[NSArray class]]) regItems = items;
+            if (regItems == nil) {
+                id dd = [box objectForKey:@"data"];
+                if ([dd isKindOfClass:[NSDictionary class]]) {
+                    id ar = [dd objectForKey:@"archives"];
+                    if ([ar isKindOfClass:[NSArray class]]) regItems = ar;
+                } else if ([dd isKindOfClass:[NSArray class]]) {
+                    regItems = dd;
+                }
+            }
+            if ([regItems isKindOfClass:[NSArray class]]) {
+                NSString *rtitle = route.note ?: @"推荐";
+                NSDictionary *rc = @{
+                    @"type":  @"recommend",
+                    @"style": @"medium",
+                    @"title": rtitle,
+                    @"param": @"",
+                    @"body":  regItems
+                };
+                NSMutableDictionary *fx = [NSMutableDictionary dictionaryWithDictionary:box];
+                [fx setObject:@[rc] forKey:@"data"];
+                box = fx;
+                BRINFO(@"[改写] region 已包成卡片数组（%@，body %lu 条）",
+                       rtitle, (unsigned long)[regItems count]);
+            }
+        } @catch (NSException *e) { }
         return [self dataFromJSON:box];
     }
 
