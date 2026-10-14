@@ -467,6 +467,34 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
                 BRINFO(@"[改写] 同步响应 %@：%lu -> %lu 字节",
                        brRoute.kind, (unsigned long)before, (unsigned long)[conv length]);
                 brData = conv;
+
+                // ★★★ 关键：必须同步更新 respOut 里的 Content-Length！
+                //   客户端会按 NSURLResponse 声明的长度去读/校验响应体，
+                //   我们换了 body 却不改长度 → 长度不匹配 → JSON 解析失败
+                //   → arrayValue 拿到 nil → 整页空白（这正是"转换器一开就白页"的原因）。
+                //   参考实现是独立 HTTP 代理，它重新封装响应所以长度天然正确；
+                //   进程内替换必须自己补这一步。
+                if (respOut != NULL && *respOut != nil) {
+                    Class respCls = NSClassFromString(@"NSHTTPURLResponse");
+                    id old = *respOut;
+                    if (respCls != Nil && [old isKindOfClass:respCls]) {
+                        NSHTTPURLResponse *o = (NSHTTPURLResponse *)old;
+                        NSMutableDictionary *hd = [[o allHeaderFields] mutableCopy];
+                        if (hd == nil) hd = [NSMutableDictionary dictionary];
+                        [hd setObject:[NSString stringWithFormat:@"%lu", (unsigned long)[conv length]]
+                               forKey:@"Content-Length"];
+                        [hd setObject:@"application/json" forKey:@"Content-Type"];
+                        id nr = [[respCls alloc] initWithURL:[o URL]
+                                                  statusCode:[o statusCode]
+                                                 HTTPVersion:@"HTTP/1.1"
+                                                headerFields:hd];
+                        if (nr != nil) {
+                            *respOut = nr;
+                            BRDBG(@"[改写] respOut 已更新 Content-Length=%lu",
+                                  (unsigned long)[conv length]);
+                        }
+                    }
+                }
             }
         }
     } @catch (NSException *e) {
