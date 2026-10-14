@@ -708,48 +708,56 @@ static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
 
 #pragma mark - ★ 登录页改造（短信验证码登录）
 
-// ★★ 三条从实测崩溃中得出的铁律：
-//   ① 每个类必须有【独立】的原函数指针
-//      （共用全局指针循环挂多类 → 第一个类的 hook 去调第三个类的原函数 → 崩溃）
-//   ② 绝不在 viewDidLayoutSubviews 里干活
-//      （QuartzCore 布局周期内 → dyld 符号绑定失败 → EXC_BREAKPOINT）
-//   ③ 绝不用 dispatch_after / dispatch_async
-//      （libdispatch 符号在本 dylib 首次调用时绑定失败 → EXC_BREAKPOINT）
-//      一律改用 Foundation 的 performSelector:withObject:afterDelay:
+// ★★★ 四条从实测崩溃中得出的铁律：
+//   ① 绝不 hook「继承来的方法」。BBPhoneUserLoginViewController 自己不实现
+//      viewDidAppear:（继承自父类），对它做 MSHookMessageEx 会破坏消息转发链，
+//      表现为「进入登录页 3 秒后崩溃」。正确做法是 hook 真正的实现者
+//      （UIViewController），再按类名过滤。
+//   ② 绝不在 viewDidLayoutSubviews 里干活（QuartzCore 布局周期内 → 绑定失败）
+//   ③ 绝不用 dispatch_after / dispatch_async（libdispatch 符号绑定失败 → SIGTRAP）
+//      一律用 performSelector:withObject:afterDelay:
+//   ④ 用 performSelector 前必须确保 selector 存在（否则 unrecognized selector）
 
-// 延迟回调（所有登录页类共用一个实现；用 class_addMethod 挂上去）
 static void br_relabel_now(id self, SEL _cmd) {
     @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
 }
 
-#define BR_LOGIN_HOOK(CLS)                                                    \
-    static void (*o_did_##CLS)(id, SEL, BOOL);                                \
-    static void h_did_##CLS(id self, SEL _cmd, BOOL a) {                      \
-        if (o_did_##CLS != NULL) o_did_##CLS(self, _cmd, a);                  \
-        @try {                                                                \
-            [self performSelector:@selector(brRelabelNow)                     \
-                       withObject:nil afterDelay:0.35];                       \
-            [self performSelector:@selector(brRelabelNow)                     \
-                       withObject:nil afterDelay:1.20];                       \
-            [self performSelector:@selector(brRelabelNow)                     \
-                       withObject:nil afterDelay:2.50];                       \
-        } @catch (NSException *e) { }                                         \
-    }                                                                         \
-    static void br_hook_##CLS(void) {                                         \
-        Class c = NSClassFromString(@#CLS);                                   \
-        if (c == Nil) { BRINFO(@"没有这个类: %@", @#CLS); return; }           \
-        class_addMethod(c, @selector(brRelabelNow),                           \
-                        (IMP)&br_relabel_now, "v@:");                         \
-        MSHookMessageEx(c, @selector(viewDidAppear:),                         \
-            (IMP)&h_did_##CLS, (IMP *)&o_did_##CLS);                          \
-        BRINFO(@"登录页已挂: %@", @#CLS);                                     \
-    }
+// 是否是我们关心的登录/注册页
+static BOOL BRIsLoginVC(id vc) {
+    @try {
+        NSString *cn = NSStringFromClass([vc class]);
+        if (cn == nil) return NO;
+        if ([cn rangeOfString:@"Login"].location == NSNotFound &&
+            [cn rangeOfString:@"Register"].location == NSNotFound) return NO;
+        // 只认哔哩哔哩自己的类
+        return ([cn rangeOfString:@"BB"].location == 0 ||
+                [cn rangeOfString:@"Bili"].location == 0);
+    } @catch (NSException *e) { return NO; }
+}
 
-// iPhone
-BR_LOGIN_HOOK(BBPhoneUserLoginViewController)
-// iPad（普通版 + HD 版）
-BR_LOGIN_HOOK(BBPadUserLoginViewController)
-BR_LOGIN_HOOK(BBPadHDUserLoginViewController)
+static void (*o_vcDidAppear)(id, SEL, BOOL);
+static void h_vcDidAppear(id self, SEL _cmd, BOOL a) {
+    if (o_vcDidAppear != NULL) o_vcDidAppear(self, _cmd, a);
+    @try {
+        if (!BRIsLoginVC(self)) return;
+        Class c = [self class];
+        if (![c instancesRespondToSelector:@selector(brRelabelNow)]) {
+            class_addMethod(c, @selector(brRelabelNow), (IMP)&br_relabel_now, "v@:");
+        }
+        [self performSelector:@selector(brRelabelNow) withObject:nil afterDelay:0.35];
+        [self performSelector:@selector(brRelabelNow) withObject:nil afterDelay:1.20];
+        [self performSelector:@selector(brRelabelNow) withObject:nil afterDelay:2.50];
+        BRINFO(@"[登录] 已安排改造: %@", NSStringFromClass(c));
+    } @catch (NSException *e) { }
+}
+
+static void br_hook_login_vcs(void) {
+    Class vcCls = NSClassFromString(@"UIViewController");
+    if (vcCls == Nil) { BRINFO(@"★ 拿不到 UIViewController"); return; }
+    MSHookMessageEx(vcCls, @selector(viewDidAppear:),
+                    (IMP)&h_vcDidAppear, (IMP *)&o_vcDidAppear);
+    BRINFO(@"已挂 UIViewController.viewDidAppear:（按类名过滤登录页）");
+}
 
 %ctor
 {
@@ -834,16 +842,7 @@ BR_LOGIN_HOOK(BBPadHDUserLoginViewController)
                 //   之前循环挂 3 个类，而 o_loginVCDidAppear / o_loginVCLayout
                 //   是**全局变量**，每挂一次就被覆盖 → 第一个类的 hook
                 //   会去调第三个类的原函数 → 调错方法 → 崩溃。
-                // ★ 决定性实验开关：/tmp/br-nologin 存在时完全不挂登录页 hook。
-                //   目的：区分「登录页闪退是我造成的」还是「App 自己就会崩」
-                //   （老登录页可能要加载人机验证 WebView，iOS 7 打不开）。
-                if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nologin"]) {
-                    BRINFO(@"登录页 hook 已被 /tmp/br-nologin 关闭（诊断模式）");
-                } else {
-                    br_hook_BBPhoneUserLoginViewController();
-                    br_hook_BBPadUserLoginViewController();
-                    br_hook_BBPadHDUserLoginViewController();
-                }
+                br_hook_login_vcs();
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");
