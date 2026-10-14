@@ -167,6 +167,8 @@ static void BRRunSelfTest(void) {
             @"http://interface.bilibili.com/playurl?aid=170001&cid=279786&qn=32&platform=html5",
             // ★ 视频详情（验证 view_to_old 的字段提升）
             @"http://app.bilibili.com/x/web-interface/view?aid=170001",
+            // ★ 分区（验证 archives/page/size）
+            @"http://app.bilibili.com/x/v2/region?rid=1&pn=1&ps=20",
             nil];
 
         for (NSString *u in urls) {

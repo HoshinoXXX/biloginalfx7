@@ -540,30 +540,71 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ---------- 伪二级分区（搜索结果 → 分区结构）----------
-    if ([kind isEqualToString:@"regiontag"]) {
-        NSArray *src = nil;
-        NSDictionary *d = [j objectForKey:@"data"];
-        if ([d isKindOfClass:[NSDictionary class]]) {
-            src = [d objectForKey:@"result"];
-        } else if ([[j objectForKey:@"result"] isKindOfClass:[NSArray class]]) {
-            src = [j objectForKey:@"result"];
-        }
-        NSMutableArray *archives = [NSMutableArray array];
-        if ([src isKindOfClass:[NSArray class]]) {
-            for (NSDictionary *it in src) {
-                if (![it isKindOfClass:[NSDictionary class]]) continue;
-                [archives addObject:[self legacyVideoFrom:it]];
+    // ================= 分区（照搬 5.9 参考实现 region_to_old / search_to_region）===
+    // ★ 老 App 从 data.archives[] 取列表，并且**必须给 page / size**
+    //   否则分页算不出来 → 排版错乱（用户实测反馈）。
+    if ([kind isEqualToString:@"region"] || [kind isEqualToString:@"regiontag"]) {
+        NSDictionary *j = [self jsonFromData:body];
+        NSArray *arcs = nil;
+        id dd = [j objectForKey:@"data"];
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id a = [dd objectForKey:@"archives"];
+            if ([a isKindOfClass:[NSArray class]]) arcs = a;
+            else {
+                id l = [dd objectForKey:@"list"];
+                if ([l isKindOfClass:[NSArray class]]) arcs = l;
             }
         }
-        NSDictionary *out = @{@"code": @0, @"message": @"0",
-                              @"data": @{@"archives": archives, @"num": @([archives count]),
-                                         @"page": route.extra[@"pn"] ?: @1,
-                                         @"size": @([archives count])},
-                              @"list": archives};
-        BRDBG(@"伪二级分区「%@」返回 %lu 条", route.extra[@"tag"],
-              (unsigned long)[archives count]);
-        return [self dataFromJSON:[self fixImages:out]];
+        NSMutableArray *items = [NSMutableArray array];
+        for (id raw in arcs) {
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *r = raw;
+            NSDictionary *owner = [r objectForKey:@"owner"];
+            if (![owner isKindOfClass:[NSDictionary class]]) owner = @{};
+            NSDictionary *stat = [r objectForKey:@"stat"];
+            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
+
+            long long aidLL = 0;
+            id aidRaw = [r objectForKey:@"aid"];
+            if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+            long long fakeLL = [BRStore fakeAidForReal:aidLL];
+            NSNumber *fake = (fakeLL > 0) ? @(fakeLL) : nil;
+
+            id play = [r objectForKey:@"play"];   if (play == nil) play = [stat objectForKey:@"view"];
+            id dm   = [r objectForKey:@"danmaku"]; if (dm == nil) dm = [stat objectForKey:@"danmaku"];
+            id author = [r objectForKey:@"author"]; if (author == nil) author = [owner objectForKey:@"name"];
+            id mid    = [r objectForKey:@"mid"];    if (mid == nil) mid = [owner objectForKey:@"mid"];
+            id face   = [r objectForKey:@"face"];   if (face == nil) face = [owner objectForKey:@"face"];
+            id pub    = [r objectForKey:@"pubdate"]; if (pub == nil) pub = [r objectForKey:@"ctime"];
+
+            [items addObject:@{
+                @"aid":          fake ?: @0,
+                @"bvid":         [r objectForKey:@"bvid"] ?: @"",
+                @"title":        [r objectForKey:@"title"] ?: @"",
+                @"pic":          BRPicFix([r objectForKey:@"pic"] ?: @""),
+                @"author":       author ?: @"",
+                @"mid":          mid ?: @0,
+                @"face":         BRPicFix(face ?: @""),
+                @"play":         play ?: @0,
+                @"video_review": dm ?: @0,
+                @"danmaku":      dm ?: @0,
+                @"duration":     BRFmtDuration([r objectForKey:@"duration"]),
+                @"pubdate":      pub ?: @0,
+                @"typename":     [r objectForKey:@"tname"] ?: @"",
+                @"typeid":       [r objectForKey:@"tid"] ?: @0,
+                @"arcurl":       [NSString stringWithFormat:@"http://www.bilibili.com/video/av%lld", aidLL],
+            }];
+        }
+        // ★ 关键：archives + list + num + pages + page + size 都要给
+        NSDictionary *box = @{@"code": @0, @"message": @"0",
+                              @"data": @{@"archives": items, @"list": items,
+                                         @"num": @([items count]), @"pages": @1,
+                                         @"page": @1, @"size": @([items count] ?: @20)},
+                              @"list": items, @"archives": items};
+        BRINFO(@"[改写] region 输出 %lu 条（含 page/size）", (unsigned long)[items count]);
+        return [self dataFromJSON:box];
     }
+
 
     // ---------- 分区（PGC 番剧）----------
     if ([kind isEqualToString:@"region"] && [route.extra[@"pgc"] boolValue]) {
