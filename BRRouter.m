@@ -520,6 +520,16 @@ static NSString *BRFmtDuration(id d) {
     }
 
     if ([tag length]) {
+        // ★ 开关回退：转换器禁用时，搜索结果转不成二级分区结构 → 空白。
+        //   改走 newlist（响应原生就是 archives[]）。
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noconv"]) {
+            r.url = [NSString stringWithFormat:
+                @"https://api.bilibili.com/x/web-interface/newlist?rid=%@&pn=%@&ps=%@&tag_name=%@",
+                rid, pn, ps, tag];
+            r.kind = @"raw";
+            r.note = @"分区(带tag，开关回退 newlist)";
+            return r;
+        }
         // ★★ 伪二级分区：B 站原二级分区服务已关停（带 tag 只是换了一页无关内容），
         //    所以改用「该分区名」做关键词去搜索，再把结果转成二级分区结构。
         //    ⚠️ 关键词必须传**原始值**：wbiSignURL 会对每个值再编码一次，
@@ -533,6 +543,18 @@ static NSString *BRFmtDuration(id d) {
         r.ua = [BRSession searchUA];
         r.extra = @{@"tag": tag, @"pn": pn};
         r.note = [NSString stringWithFormat:@"伪二级分区「%@」", tag];
+        return r;
+    }
+
+    // ★★ 开关回退：转换器被禁用（/tmp/br-noconv）时，UWP 通道的 data.new[]
+    //    没有任何东西能把它转成老客户端认的结构 → 分区彻底空白。
+    //    这时改走 newlist —— 它的响应原生就是 archives[]，不转换也能显示。
+    if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noconv"]) {
+        r.url = [NSString stringWithFormat:
+            @"https://api.bilibili.com/x/web-interface/newlist?rid=%@&pn=%@&ps=%@",
+            rid, pn, ps];
+        r.kind = @"raw";
+        r.note = @"分区（开关回退 newlist）";
         return r;
     }
 
