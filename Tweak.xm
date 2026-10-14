@@ -295,7 +295,7 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
             NSString *seed = [NSString stringWithFormat:@"%@%lld", buvid, ms];
             NSData *sd = [seed dataUsingEncoding:NSUTF8StringEncoding];
             unsigned char dg[16];
-            if (BRCCMD5(sd.bytes, (unsigned int)sd.length, dg) != NULL) {
+            if (BRCC_MD5(sd.bytes, (unsigned int)sd.length, dg) != NULL) {
                 NSMutableString *h = [NSMutableString string];
                 for (int i = 0; i < 16; i++) [h appendFormat:@"%02x", dg[i]];
                 setIfEmpty(@"login_session_id", h);
@@ -333,7 +333,7 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
         NSString *signSeed = [raw stringByAppendingString:BR_LOGIN_APPSEC];
         NSData *sd2 = [signSeed dataUsingEncoding:NSUTF8StringEncoding];
         unsigned char dg2[16];
-        if (BRCCMD5(sd2.bytes, (unsigned int)sd2.length, dg2) == NULL) return nil;
+        if (BRCC_MD5(sd2.bytes, (unsigned int)sd2.length, dg2) == NULL) return nil;
         NSMutableString *sign = [NSMutableString string];
         for (int i = 0; i < 16; i++) [sign appendFormat:@"%02x", dg2[i]];
         [outPairs addObject:[NSString stringWithFormat:@"sign=%@", sign]];
