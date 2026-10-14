@@ -829,31 +829,23 @@ static void h_mineVCDidAppear(id self, SEL _cmd, BOOL animated) {
                         (IMP)&h_dataTaskURLCH, (IMP *)&o_dataTaskURLCH);
                     BRINFO(@"NSURLSession 已挂载");
                 // ★ 登录页改造：hook 登录页与「我的」页
-                for (NSString *cn in @[@"BBPhoneUserLoginViewController",
-                                       @"BBPadUserLoginViewController",
-                                       @"BBPadHDUserLoginViewController"]) {
-                    Class lc = NSClassFromString(cn);
+                // ★ 只挂 iPhone 那一个类！
+                //   之前循环挂 3 个类，而 o_loginVCDidAppear / o_loginVCLayout
+                //   是**全局变量**，每挂一次就被覆盖 → 第一个类的 hook
+                //   会去调第三个类的原函数 → 调错方法 → 崩溃。
+                {
+                    Class lc = NSClassFromString(@"BBPhoneUserLoginViewController");
                     if (lc != Nil) {
                         MSHookMessageEx(lc, @selector(viewDidAppear:),
                             (IMP)&h_loginVCDidAppear, (IMP *)&o_loginVCDidAppear);
                         MSHookMessageEx(lc, @selector(viewDidLayoutSubviews),
                             (IMP)&h_loginVCLayout, (IMP *)&o_loginVCLayout);
-                        BRINFO(@"登录页已挂: %@", cn);
+                        BRINFO(@"登录页已挂: BBPhoneUserLoginViewController");
+                    } else {
+                        BRINFO(@"★ 找不到 BBPhoneUserLoginViewController");
                     }
                 }
-                for (NSString *cn in @[@"BBPhoneMineViewController",
-                                       @"BBPhoneUserCenterViewController",
-                                       @"BBPhoneMyViewController",
-                                       @"BBPhoneMinePageViewController",
-                                       @"BBPhoneProfileViewController",
-                                       @"BBPhoneAccountViewController"]) {
-                    Class mc = NSClassFromString(cn);
-                    if (mc != Nil) {
-                        MSHookMessageEx(mc, @selector(viewDidAppear:),
-                            (IMP)&h_mineVCDidAppear, (IMP *)&o_mineVCDidAppear);
-                        BRINFO(@"我的页已挂: %@", cn);
-                    }
-                }
+                // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");
                 }
