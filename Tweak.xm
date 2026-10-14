@@ -834,9 +834,16 @@ BR_LOGIN_HOOK(BBPadHDUserLoginViewController)
                 //   之前循环挂 3 个类，而 o_loginVCDidAppear / o_loginVCLayout
                 //   是**全局变量**，每挂一次就被覆盖 → 第一个类的 hook
                 //   会去调第三个类的原函数 → 调错方法 → 崩溃。
-                br_hook_BBPhoneUserLoginViewController();
-                br_hook_BBPadUserLoginViewController();
-                br_hook_BBPadHDUserLoginViewController();
+                // ★ 决定性实验开关：/tmp/br-nologin 存在时完全不挂登录页 hook。
+                //   目的：区分「登录页闪退是我造成的」还是「App 自己就会崩」
+                //   （老登录页可能要加载人机验证 WebView，iOS 7 打不开）。
+                if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nologin"]) {
+                    BRINFO(@"登录页 hook 已被 /tmp/br-nologin 关闭（诊断模式）");
+                } else {
+                    br_hook_BBPhoneUserLoginViewController();
+                    br_hook_BBPadUserLoginViewController();
+                    br_hook_BBPadHDUserLoginViewController();
+                }
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");
