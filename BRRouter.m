@@ -585,38 +585,64 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ---------- 搜索：老客户端要顶层 list + page ----------
+    // ================= 搜索（照搬 5.9 参考实现 search_to_old）=================
     if ([kind isEqualToString:@"search"]) {
-        NSArray *src = nil;
-        NSDictionary *d = [j objectForKey:@"data"];
-        if ([d isKindOfClass:[NSDictionary class]]) {
-            src = [d objectForKey:@"result"];
-            if (![src isKindOfClass:[NSArray class]]) {
-                // media_bangumi 等类型的结构不同
-                NSDictionary *items = [d objectForKey:@"items"];
-                if ([items isKindOfClass:[NSDictionary class]]) {
-                    for (NSString *k in items) {
-                        if ([[items objectForKey:k] isKindOfClass:[NSArray class]]) {
-                            src = [items objectForKey:k]; break;
-                        }
-                    }
-                }
-            }
-        } else if ([[j objectForKey:@"result"] isKindOfClass:[NSArray class]]) {
-            src = [j objectForKey:@"result"];
+        NSDictionary *j = [self jsonFromData:body];
+        NSDictionary *dd = [j objectForKey:@"data"];
+        NSArray *result = nil;
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id r = [dd objectForKey:@"result"];
+            if ([r isKindOfClass:[NSArray class]]) result = r;
         }
         NSMutableArray *videos = [NSMutableArray array];
-        if ([src isKindOfClass:[NSArray class]]) {
-            for (NSDictionary *it in src) {
-                if (![it isKindOfClass:[NSDictionary class]]) continue;
-                [videos addObject:[self legacyVideoFrom:it]];
+        for (id raw in result) {
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *r = raw;
+            NSString *ty = [r objectForKey:@"type"];
+            if ([ty length] && ![ty isEqualToString:@"video"]) continue;
+            id dm = [r objectForKey:@"danmaku"];
+            if (dm == nil) dm = [r objectForKey:@"video_review"];
+            long long aidLL = 0;
+            id aidRaw = [r objectForKey:@"aid"];
+            if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+            long long fakeLL = [BRStore fakeAidForReal:aidLL];
+            NSNumber *fake = (fakeLL > 0) ? @(fakeLL) : nil;
+            [videos addObject:@{
+                @"type":         @"video",
+                @"aid":          fake ?: @0,
+                @"title":        BRStripEm([r objectForKey:@"title"]),
+                @"pic":          BRPicFix([r objectForKey:@"pic"] ?: @""),
+                @"description":  BRStripEm([r objectForKey:@"description"] ?: @""),
+                @"author":       [r objectForKey:@"author"] ?: @"",
+                @"mid":          [r objectForKey:@"mid"] ?: @0,
+                @"duration":     [r objectForKey:@"duration"] ?: @"",
+                @"play":         [r objectForKey:@"play"] ?: @0,
+                @"video_review": dm ?: @0,
+                @"danmaku":      dm ?: @0,
+                @"create":       [r objectForKey:@"pubdate"] ?: [r objectForKey:@"create"] ?: @"",
+                @"bvid":         [r objectForKey:@"bvid"] ?: @"",
+                @"typename":     [r objectForKey:@"typename"] ?: @"",
+                @"arcurl":       [r objectForKey:@"arcurl"] ?: @"",
+            }];
+        }
+        long long totalPage = 0;
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id np = [dd objectForKey:@"numPages"];
+            if ([np respondsToSelector:@selector(longLongValue)]) totalPage = [np longLongValue];
+            if (totalPage <= 0) {
+                id nr = [dd objectForKey:@"numResults"];
+                if ([nr respondsToSelector:@selector(longLongValue)]) totalPage = [nr longLongValue] / 20 + 1;
             }
         }
-        NSDictionary *out = @{@"code": @0, @"message": @"0",
-                              @"list": videos, @"page": @([videos count]),
-                              @"data": @{@"list": videos, @"page": @([videos count])}};
-        BRDBG(@"搜索返回 %lu 条", (unsigned long)[videos count]);
-        return [self dataFromJSON:[self fixImages:out]];
+        if (totalPage <= 0) totalPage = 1;
+        // ★ 顶层 list + page（不要嵌在 data.items.video 里）
+        NSDictionary *box = @{@"code": @0, @"message": @"0",
+                              @"list": videos, @"page": @(totalPage),
+                              @"data": @{@"list": videos, @"page": @(totalPage)}};
+        BRINFO(@"[改写] search 输出 %lu 条 / %lld 页", (unsigned long)[videos count], totalPage);
+        return [self dataFromJSON:box];
     }
+
 
     // ---------- 视频详情 ----------
     if ([kind isEqualToString:@"view"]) {
