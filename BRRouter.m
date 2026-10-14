@@ -729,6 +729,16 @@ static NSString *BRStripEm(NSString *s) {
     NSDictionary *j = [self jsonFromData:body];
     if (j == nil) return body;   // 不是 JSON（例如某些 XML）就原样返回
 
+    // [BRRESPLOG] 记录每个响应的 code 与长度 —— 用于定位是哪个上游在失败
+    @try {
+        id c = [j objectForKey:@"code"];
+        id msg = [j objectForKey:@"message"];
+        BRINFO(@"[响应] %@ code=%@ len=%lu msg=%@",
+               route.note ?: route.kind ?: @"?",
+               c ?: @"-", (unsigned long)[body length],
+               ([msg isKindOfClass:[NSString class]] ? msg : @"-"));
+    } @catch (NSException *e) { }
+
     // ---------- nav：注入登录态 ----------
     if ([kind isEqualToString:@"nav"]) {
         NSMutableDictionary *o = [j mutableCopy];
