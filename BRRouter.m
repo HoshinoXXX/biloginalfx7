@@ -527,6 +527,16 @@ static BOOL BRConvOff(NSString *kind) {
 // ---------------------------------------------------------------- 分区
 
 + (BRRoute *)routeRegion:(NSString *)path qs:(NSDictionary *)qs {
+    // ★★★ 关键修正：/x/v2/region（不带 /show）是「分区列表/菜单」请求，
+    //   不是「某个分区里的视频」。之前把它改道到 UWP 的 dynamic/child?rid=1，
+    //   等于把「视频列表」当成「分区列表」交给 App → 找不到字段 → self。
+    //   所以这里不改写，让 App 用它的原始接口。
+    if ([path isEqualToString:@"/x/v2/region"] ||
+        [path isEqualToString:@"/x/v2/region/index"]) {
+        BRINFO(@"[改写] /x/v2/region 是分区列表请求 → 原样透传（不改写）");
+        return nil;
+    }
+
     BRRoute *r = [[BRRoute alloc] init];
     NSString *rid = qs[@"rid"] ?: qs[@"tag_id"] ?: qs[@"tid"] ?: @"1";
     NSString *pn  = qs[@"pn"] ?: qs[@"page"] ?: @"1";
