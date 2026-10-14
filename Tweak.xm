@@ -11,38 +11,6 @@
 //  对策：
 //    1) 不用 +load（它在 dyld 初始化最早期跑，抛异常会让整个 dlopen 失败），
 //       改成 
-#pragma mark - ★ 登录页改造（短信验证码登录）
-
-static void (*o_loginVCDidAppear)(id, SEL, BOOL);
-static void h_loginVCDidAppear(id self, SEL _cmd, BOOL animated) {
-    o_loginVCDidAppear(self, _cmd, animated);
-    @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
-}
-
-// 「我的」页面：去掉注册按钮（按用户要求）
-static void (*o_mineVCDidAppear)(id, SEL, BOOL);
-static void h_mineVCDidAppear(id self, SEL _cmd, BOOL animated) {
-    o_mineVCDidAppear(self, _cmd, animated);
-    @try {
-        UIView *root = [self isKindOfClass:[NSClassFromString(@"UIViewController") class]]
-                     ? [(UIViewController *)self view] : nil;
-        if (root == nil) return;
-        NSMutableArray *stack = [NSMutableArray arrayWithObject:root];
-        while ([stack count]) {
-            UIView *v = [stack lastObject]; [stack removeLastObject];
-            if ([v isKindOfClass:[UIButton class]]) {
-                NSString *ti = [(UIButton *)v titleForState:0] ?: @"";
-                if ([ti rangeOfString:@"注册"].location != NSNotFound) {
-                    [v setHidden:YES];
-                    [v removeFromSuperview];
-                    BRINFO(@"[登录] 已移除「我的」页面的注册按钮");
-                }
-            }
-            for (UIView *s in [v subviews]) [stack addObject:s];
-        }
-    } @catch (NSException *e) { }
-}
-
 %ctor 里显式调用 +bootstrap
 //    2) 每个阶段都往 /tmp/br-milestone.txt 写一行 —— 走到哪一步一目了然
 //    3) 整体套 @try/@catch，异常被捕获后 dlopen 就不会失败，dylib 得以保留
@@ -416,8 +384,18 @@ static NSURLRequest *BRRewriteRequestEx(NSURLRequest *req, BRRoute **outRoute) {
         //   老接口 /api/oauth2/login 已关停，这里把它的 username/password
         //   取出来当作 mobile/code，改道到 x/passport-login/login/sms。
         if ([low rangeOfString:@"/oauth2/login"].location != NSNotFound) {
-            NSString *mobile = qs[@"username"] ?: qs[@"mobile"] ?: @"";
-            NSString *code   = qs[@"password"] ?: qs[@"code"] ?: @"";
+            // 这里没有 qs，自己解一下原请求的 query
+            NSMutableDictionary *lqs = [NSMutableDictionary dictionary];
+            for (NSString *kv in [[[req URL] query] ?: @"" componentsSeparatedByString:@"&"]) {
+                NSRange eq = [kv rangeOfString:@"="];
+                if (eq.location == NSNotFound) continue;
+                NSString *k = [kv substringToIndex:eq.location];
+                NSString *v = [kv substringFromIndex:eq.location + 1];
+                NSString *dv = [v stringByReplacingPercentEscapesUsingEncoding:NSUTF8StringEncoding];
+                if (k && [k length]) [lqs setObject:(dv ?: v) forKey:k];
+            }
+            NSString *mobile = lqs[@"username"] ?: lqs[@"mobile"] ?: @"";
+            NSString *code   = lqs[@"password"] ?: lqs[@"code"] ?: @"";
             if ([mobile length] && [code length]) {
                 NSMutableDictionary *lp = [NSMutableDictionary dictionary];
                 [lp setObject:mobile forKey:@"mobile"];
@@ -726,6 +704,38 @@ static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
         if (req != nil) return h_dataTaskReq(self, _cmd, req);
     } @catch (NSException *e) { }
     return o_dataTaskURL(self, _cmd, u);
+}
+
+#pragma mark - ★ 登录页改造（短信验证码登录）
+
+static void (*o_loginVCDidAppear)(id, SEL, BOOL);
+static void h_loginVCDidAppear(id self, SEL _cmd, BOOL animated) {
+    o_loginVCDidAppear(self, _cmd, animated);
+    @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
+}
+
+// 「我的」页面：去掉注册按钮（按用户要求）
+static void (*o_mineVCDidAppear)(id, SEL, BOOL);
+static void h_mineVCDidAppear(id self, SEL _cmd, BOOL animated) {
+    o_mineVCDidAppear(self, _cmd, animated);
+    @try {
+        UIView *root = [self isKindOfClass:[NSClassFromString(@"UIViewController") class]]
+                     ? [(UIViewController *)self view] : nil;
+        if (root == nil) return;
+        NSMutableArray *stack = [NSMutableArray arrayWithObject:root];
+        while ([stack count]) {
+            UIView *v = [stack lastObject]; [stack removeLastObject];
+            if ([v isKindOfClass:[UIButton class]]) {
+                NSString *ti = [(UIButton *)v titleForState:0] ?: @"";
+                if ([ti rangeOfString:@"注册"].location != NSNotFound) {
+                    [v setHidden:YES];
+                    [v removeFromSuperview];
+                    BRINFO(@"[登录] 已移除「我的」页面的注册按钮");
+                }
+            }
+            for (UIView *s in [v subviews]) [stack addObject:s];
+        }
+    } @catch (NSException *e) { }
 }
 
 %ctor
