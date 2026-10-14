@@ -253,6 +253,14 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
         // ★ 精确区分：发验证码 vs 短信登录
         // ★ 精确区分（上一版写得太宽，把密码登录 /api/oauth2/login 也当成
         //   短信登录，给它加了 device_name/from_pv 等字段 → 参数污染 → 登录失败）
+        // ★★ 密码登录（/api/oauth2/*）**完全透传**：
+        //   App 用 getKey 拿到的 RSA 公钥加密密码，而该密钥与它自己的 appkey 绑定；
+        //   我们把 appkey 换成 HD 版 + 加上 android 参数 → 服务端解不开 → 登录失败。
+        //   所以这类请求不动它。
+        if ([low rangeOfString:@"oauth2/"].location != NSNotFound) {
+            BRINFO(@"[登录] oauth2 请求原样透传: %@", path);
+            return nil;
+        }
         BOOL isSmsSend  = ([low rangeOfString:@"/sms/send"].location != NSNotFound);
         //   只有完整子路径 /login/sms 才算短信登录
         BOOL isSmsLogin = ([low rangeOfString:@"/login/sms"].location != NSNotFound);
