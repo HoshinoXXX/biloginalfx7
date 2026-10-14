@@ -221,31 +221,14 @@ static void BRCollectButtons(UIView *v, NSMutableArray *out) {
     for (UIView *s in [v subviews]) BRCollectButtons(s, out);
 }
 
-// ★★ 崩溃定位版：只遍历 + 统计 + 写日志，**不做任何修改**。
-//    若这一版不崩，说明崩在「修改」的调用上；若仍崩，说明崩在遍历本身。
+// ★★ 二分法最后一步：函数体只剩一行日志。
+//    - 若仍崩溃 → 崩溃不在本函数，而在 hook 机制 / dylib 本身
+//    - 若不再崩 → 崩溃在视图树遍历或那几个调用里
+static int gBRRelabelCount = 0;
 void BRRelabelLoginPage(id vc) {
-    if (vc == nil) return;
-    @try {
-        UIView *root = [vc view];
-        if (root == nil) { BRINFO(@"[登录] 页面没 view"); return; }
-
-        NSMutableArray *tfs = [NSMutableArray array];
-        BRCollectTextFields(root, tfs);
-        NSMutableArray *btns = [NSMutableArray array];
-        BRCollectButtons(root, btns);
-
-        NSMutableString *names = [NSMutableString string];
-        for (UIButton *b in btns) {
-            NSString *ti = @"";
-            @try { ti = [b titleForState:0] ?: @""; } @catch (NSException *e) { }
-            [names appendFormat:@"[%@]", ti];
-        }
-        BRINFO(@"[登录] %@ 输入框=%lu 按钮=%lu %@",
-               NSStringFromClass([vc class]),
-               (unsigned long)[tfs count], (unsigned long)[btns count], names);
-    } @catch (NSException *e) {
-        BRERR(@"[登录] 遍历失败: %@", [e description]);
-    }
+    gBRRelabelCount++;
+    BRINFO(@"[登录] 改造被调用第 %d 次, class=%@", gBRRelabelCount,
+           vc ? NSStringFromClass([vc class]) : @"(nil)");
 }
 
 @implementation BRLoginSmsFlow
