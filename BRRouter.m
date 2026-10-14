@@ -425,25 +425,83 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ---------- 推荐流：老客户端要 data 是数组 ----------
+    // ================= 首页推荐（照搬 5.9 参考实现 feed_to_old）=================
     if ([kind isEqualToString:@"feed"]) {
-        NSMutableDictionary *o = [j mutableCopy];
-        id item = [j objectForKey:@"data"];
-        if ([item isKindOfClass:[NSDictionary class]]) {
-            id arr = [item objectForKey:@"item"];
-            if ([arr isKindOfClass:[NSArray class]]) {
-                NSMutableArray *out = [NSMutableArray array];
-                for (NSDictionary *it in arr) {
-                    NSMutableDictionary *v = [self legacyVideoFrom:it];
-                    // 推荐流走 goto/uri 形式
-                    if (it[@"uri"]) [v setObject:it[@"uri"] forKey:@"uri"];
-                    if (it[@"goto"]) [v setObject:it[@"goto"] forKey:@"goto"];
-                    [out addObject:v];
-                }
-                o[@"data"] = out;
+        NSDictionary *j = [self jsonFromData:data];
+        NSDictionary *dd = [j objectForKey:@"data"];
+        NSArray *src = nil;
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id it = [dd objectForKey:@"item"];
+            if ([it isKindOfClass:[NSArray class]]) src = it;
+            else {
+                id its = [dd objectForKey:@"items"];
+                if ([its isKindOfClass:[NSArray class]]) src = its;
             }
+        } else if ([dd isKindOfClass:[NSArray class]]) {
+            src = dd;
         }
-        return [self dataFromJSON:[self fixImages:o]];
+        NSMutableArray *out = [NSMutableArray array];
+        for (id raw in src) {
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *it = raw;
+            NSDictionary *owner = [it objectForKey:@"owner"];
+            if (![owner isKindOfClass:[NSDictionary class]]) owner = @{};
+            NSDictionary *stat = [it objectForKey:@"stat"];
+            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
+
+            // ★ 新版把 aid 放在 id 字段，不是 aid
+            id aidRaw = [it objectForKey:@"id"];
+            if (aidRaw == nil) aidRaw = [it objectForKey:@"aid"];
+            long long aidLL = 0;
+            if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+            else if ([aidRaw isKindOfClass:[NSString class]]) aidLL = [(NSString *)aidRaw longLongValue];
+            long long fakeAidLL = [BRStore fakeAidForReal:aidLL];
+            NSNumber *fakeAid = (fakeAidLL > 0) ? @(fakeAidLL) : nil;
+
+            NSString *pic  = BRPicFix([it objectForKey:@"pic"] ?: [it objectForKey:@"pic_4_3"] ?: @"");
+            NSString *face = BRPicFix([owner objectForKey:@"face"] ?: @"");
+            id dm = [stat objectForKey:@"danmaku"];
+            NSString *uri = [it objectForKey:@"uri"];
+            if (uri == nil && fakeAid != nil)
+                uri = [NSString stringWithFormat:@"bilibili://video/%@", fakeAid];
+
+            [out addObject:@{
+                @"goto":        [it objectForKey:@"goto"] ?: @"av",
+                @"card_type":   [it objectForKey:@"card_type"] ?: @"small_cover_v2",
+                @"card_goto":   [it objectForKey:@"card_goto"] ?: @"av",
+                @"param":       fakeAid ? [NSString stringWithFormat:@"%@", fakeAid] : @"",
+                @"uri":         uri ?: @"",
+                @"id":          fakeAid ?: [NSNull null],
+                @"aid":         fakeAid ?: [NSNull null],
+                @"bvid":        [it objectForKey:@"bvid"] ?: @"",
+                @"cid":         [it objectForKey:@"cid"] ?: @0,
+                @"title":       [it objectForKey:@"title"] ?: @"",
+                @"cover":       pic,
+                @"pic":         pic,
+                @"author":      [owner objectForKey:@"name"] ?: @"",
+                @"mid":         [owner objectForKey:@"mid"] ?: @0,
+                @"face":        face,
+                @"play":        [stat objectForKey:@"view"] ?: @0,
+                @"danmaku":     dm ?: @0,
+                @"video_review": dm ?: @0,
+                @"favorites":   [stat objectForKey:@"favorite"] ?: @0,
+                @"review":      [stat objectForKey:@"reply"] ?: @0,
+                @"duration":    BRFmtDuration([it objectForKey:@"duration"]),
+                @"pubdate":     [it objectForKey:@"pubdate"] ?: @0,
+                @"create":      @"",
+                @"description": @"",
+                @"pages":       @1,
+                @"track_id":    [it objectForKey:@"track_id"] ?: @"",
+            }];
+        }
+        // ★ 容器：data / item / items 三个键都要给同一个数组
+        NSDictionary *box = @{@"code": @0, @"message": @"0",
+                              @"data": out, @"item": out, @"items": out,
+                              @"num": @([out count])};
+        BRINFO(@"[改写] feed 输出 %lu 条", (unsigned long)[out count]);
+        return [self dataFromJSON:box];
     }
+
 
     // ---------- 分区（UWP dynamic/child）----------
     if ([kind isEqualToString:@"region"] && [route.extra[@"uwp"] boolValue]) {
