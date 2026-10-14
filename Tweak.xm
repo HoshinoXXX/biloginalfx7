@@ -317,6 +317,7 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
             BRINFO(@"[登录] 短信登录已补 device/from_pv");
         }
 
+        if (isPwdLogin) BRINFO(@"[登录] 密码登录请求（只补公共字段）");
         // ---- 重签：去掉 appkey/sign，追加有效 appkey，按 key 排序 ----
         NSMutableArray *keys = [NSMutableArray array];
         for (NSString *k in order)
