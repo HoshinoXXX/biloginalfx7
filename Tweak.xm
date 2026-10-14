@@ -708,47 +708,38 @@ static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
 
 #pragma mark - ★ 登录页改造（短信验证码登录）
 
+// ★★ 关键：每个类都要有【独立】的原函数指针。
+//    上一版用一对全局指针循环挂 3 个类，每挂一次就被覆盖，
+//    导致第一个类的 hook 去调第三个类的原函数 → 调错方法 → 闪退。
+#define BR_LOGIN_HOOK(CLS)                                                    \
+    static void (*o_did_##CLS)(id, SEL, BOOL);                                \
+    static void h_did_##CLS(id self, SEL _cmd, BOOL a) {                      \
+        if (o_did_##CLS != NULL) o_did_##CLS(self, _cmd, a);                  \
+        @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }        \
+    }                                                                         \
+    static void (*o_lay_##CLS)(id, SEL);                                      \
+    static void h_lay_##CLS(id self, SEL _cmd) {                              \
+        if (o_lay_##CLS != NULL) o_lay_##CLS(self, _cmd);                     \
+        @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }        \
+    }                                                                         \
+    static void br_hook_##CLS(void) {                                         \
+        Class c = NSClassFromString(@#CLS);                                   \
+        if (c == Nil) { BRINFO(@"没有这个类: %@", @#CLS); return; }           \
+        MSHookMessageEx(c, @selector(viewDidAppear:),                         \
+            (IMP)&h_did_##CLS, (IMP *)&o_did_##CLS);                          \
+        MSHookMessageEx(c, @selector(viewDidLayoutSubviews),                  \
+            (IMP)&h_lay_##CLS, (IMP *)&o_lay_##CLS);                          \
+        BRINFO(@"登录页已挂: %@", @#CLS);                                     \
+    }
 
-// ★ 登录页的输入框在 UITableViewCell 里，cellForRowAtIndexPath 会反复重置
-//   placeholder，把我们在 viewDidAppear 里的修改覆盖掉。
-//   所以在 viewDidLayoutSubviews（频繁触发）里反复应用。
-static void (*o_loginVCLayout)(id, SEL);
-static void h_loginVCLayout(id self, SEL _cmd) {
-    if (o_loginVCLayout != NULL) o_loginVCLayout(self, _cmd);
-    @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
-}
-
-static void (*o_loginVCDidAppear)(id, SEL, BOOL);
-static void h_loginVCDidAppear(id self, SEL _cmd, BOOL animated) {
-    // ★ 必须先判 NULL：若该类自己没实现 viewDidAppear:（从父类继承），
-    //   MSHookMessageEx 给出的原函数指针会是 NULL，直接调用就会崩溃。
-    if (o_loginVCDidAppear != NULL) o_loginVCDidAppear(self, _cmd, animated);
-    @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
-}
-
-// 「我的」页面：去掉注册按钮（按用户要求）
-static void (*o_mineVCDidAppear)(id, SEL, BOOL);
-static void h_mineVCDidAppear(id self, SEL _cmd, BOOL animated) {
-    if (o_mineVCDidAppear != NULL) o_mineVCDidAppear(self, _cmd, animated);
-    @try {
-        UIView *root = [self isKindOfClass:[NSClassFromString(@"UIViewController") class]]
-                     ? [(UIViewController *)self view] : nil;
-        if (root == nil) return;
-        NSMutableArray *stack = [NSMutableArray arrayWithObject:root];
-        while ([stack count]) {
-            UIView *v = [stack lastObject]; [stack removeLastObject];
-            if ([v isKindOfClass:[UIButton class]]) {
-                NSString *ti = [(UIButton *)v titleForState:0] ?: @"";
-                if ([ti rangeOfString:@"注册"].location != NSNotFound) {
-                    [v setHidden:YES];
-                    [v removeFromSuperview];
-                    BRINFO(@"[登录] 已移除「我的」页面的注册按钮");
-                }
-            }
-            for (UIView *s in [v subviews]) [stack addObject:s];
-        }
-    } @catch (NSException *e) { }
-}
+// iPhone
+BR_LOGIN_HOOK(BBPhoneUserLoginViewController)
+// iPad（普通版 + HD 版）
+BR_LOGIN_HOOK(BBPadUserLoginViewController)
+BR_LOGIN_HOOK(BBPadHDUserLoginViewController)
+// 兜底：可能存在的其它命名
+BR_LOGIN_HOOK(BBPhoneUserLoginViewControllerV2)
+BR_LOGIN_HOOK(BBPadUserLoginViewControllerV2)
 
 %ctor
 {
@@ -833,17 +824,11 @@ static void h_mineVCDidAppear(id self, SEL _cmd, BOOL animated) {
                 //   之前循环挂 3 个类，而 o_loginVCDidAppear / o_loginVCLayout
                 //   是**全局变量**，每挂一次就被覆盖 → 第一个类的 hook
                 //   会去调第三个类的原函数 → 调错方法 → 崩溃。
-                {
-                    Class lc = NSClassFromString(@"BBPhoneUserLoginViewController");
-                    if (lc != Nil) {
-                        MSHookMessageEx(lc, @selector(viewDidAppear:),
-                            (IMP)&h_loginVCDidAppear, (IMP *)&o_loginVCDidAppear);
-                        MSHookMessageEx(lc, @selector(viewDidLayoutSubviews),
-                            (IMP)&h_loginVCLayout, (IMP *)&o_loginVCLayout);
-                        BRINFO(@"登录页已挂: BBPhoneUserLoginViewController");
-                    } else {
-                        BRINFO(@"★ 找不到 BBPhoneUserLoginViewController");
-                    }
+                br_hook_BBPhoneUserLoginViewController();
+                br_hook_BBPadUserLoginViewController();
+                br_hook_BBPadHDUserLoginViewController();
+                br_hook_BBPhoneUserLoginViewControllerV2();
+                br_hook_BBPadUserLoginViewControllerV2();
                 }
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
