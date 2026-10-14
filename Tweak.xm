@@ -523,6 +523,32 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
 
     NSData *brData = o_sendSync(self, _cmd, brq, respOut, errOut);
 
+    // ★ 无条件记录原始响应（含透传路径）—— 之前只在转换时记录，
+    //   导致透传请求（如 /x/v2/region）看不到任何响应信息，
+    //   无法判断是「接口返回错误」还是「格式不对」。
+    @try {
+        if (brData != nil) {
+            NSInteger st = 0;
+            if (respOut != NULL && *respOut != nil) {
+                @try { st = [[*respOut valueForKey:@"statusCode"] integerValue]; }
+                @catch (NSException *e) { }
+            }
+            NSString *head = nil;
+            if ([brData length] > 0) {
+                NSUInteger n = MIN((NSUInteger)150, [brData length]);
+                head = [[NSString alloc] initWithData:
+                        [brData subdataWithRange:NSMakeRange(0, n)]
+                                             encoding:NSUTF8StringEncoding];
+            }
+            BRINFO(@"[原始响应] %@ kind=%@ HTTP=%ld len=%lu head=%@",
+                   [[brq URL] path] ?: @"?",
+                   brRoute ? (brRoute.kind ?: @"?") : @"透传",
+                   (long)st, (unsigned long)[brData length],
+                   head ? [head stringByReplacingOccurrencesOfString:@"\n" withString:@" "]
+                        : @"(空)");
+        }
+    } @catch (NSException *e) { }
+
     // ★ 同步路径也要做响应改写 —— 之前漏了这一步，
     //   导致「请求去了新接口、新结构却原样交给老客户端」（arrayValue 拿到字典返回 nil）
     @try {
