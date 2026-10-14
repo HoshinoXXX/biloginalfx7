@@ -148,13 +148,13 @@ static NSData *BRRegionHttpGet(NSString *url) {
             id aidRaw = [it objectForKey:@"param"] ?: [it objectForKey:@"aid"];
             id cidRaw = [it objectForKey:@"cid"];
             if (aidRaw == nil) continue;
-            NSNumber *fake = [BRStore fakeAidForReal:[aidRaw longLongValue]];
-            long long fa = [fake longLongValue];
-            NSNumber *fc = @0;
+            // ★ 注意：BRStore 这两个方法返回的是 long long，不是 NSNumber*
+            long long fa = [BRStore fakeAidForReal:[aidRaw longLongValue]];
+            long long fc = 0;
             if (cidRaw != nil) {
                 long long f = [BRStore fakeCidForReal:[cidRaw longLongValue]];
                 if (f > 0) {
-                    fc = @(f);
+                    fc = f;
                     [BRStore rememberCid:f forAid:fa];
                 }
             }
@@ -172,7 +172,7 @@ static NSData *BRRegionHttpGet(NSString *url) {
                 @"param":        [NSString stringWithFormat:@"%lld", fa],
                 @"aid":          @(fa),
                 @"id":           @(fa),
-                @"cid":          fc,
+                @"cid":          @(fc),
                 @"goto":         @"av",
                 @"card_goto":    @"av",
                 @"card_type":    @"small_cover_v2",
