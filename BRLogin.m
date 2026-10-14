@@ -13,6 +13,7 @@
 //        目标改成 /x/passport-login/login/sms。
 //
 
+#import <UIKit/UIKit.h>
 #import "BRLogin.h"
 #import "BRLog.h"
 #import "BRStore.h"
