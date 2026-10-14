@@ -645,52 +645,68 @@ static NSString *BRStripEm(NSString *s) {
 
 
     // ---------- 视频详情 ----------
+    // ================= 视频详情（照搬 5.9 参考实现 view_to_old）=================
+    // App 会读顶层 data.author / mid / face / created / cid / page / part，
+    // 而新接口把这些放在 data.owner 与 data.pages[0] 里 —— 不提升就会
+    // 「code:0 但内容加载不出来」。
     if ([kind isEqualToString:@"view"]) {
-        NSMutableDictionary *o = [j mutableCopy];
-        NSDictionary *d = [j objectForKey:@"data"];
-        if ([d isKindOfClass:[NSDictionary class]]) {
-            // 详情接口有两种形态：直接 View，或 {View:..., Card:..., Related:...}
-            NSMutableDictionary *view = nil;
-            if ([d objectForKey:@"View"]) {
-                view = [[d objectForKey:@"View"] mutableCopy];
-                NSMutableDictionary *nd = [d mutableCopy];
-                nd[@"View"] = view;
-                o[@"data"] = nd;
-            } else {
-                view = [d mutableCopy];
-                o[@"data"] = view;
-            }
-            // 老客户端读的是 View 顶层的 author/mid/face
-            NSDictionary *owner = [view objectForKey:@"owner"];
-            if ([owner isKindOfClass:[NSDictionary class]]) {
-                if (view[@"author"] == nil) view[@"author"] = owner[@"name"];
-                if (view[@"mid"] == nil)    view[@"mid"] = owner[@"mid"];
-                if (view[@"face"] == nil)   view[@"face"] = owner[@"face"];
-            }
-            // ★ 32 位溢出：下发假 aid / 假 cid
-            long long realAid = [BRNumValue(view[@"aid"]) longLongValue];
-            if (realAid > 0) {
-                view[@"aid"] = @([BRStore fakeAidForReal:realAid]);
-                view[@"id"]  = @([BRStore fakeAidForReal:realAid]);
-            }
-            // 分 P 的 cid 也要虚拟化，并记下 cid->aid 供播放页还原
-            NSArray *pages = [view objectForKey:@"pages"];
-            if ([pages isKindOfClass:[NSArray class]]) {
-                NSMutableArray *np = [NSMutableArray array];
-                for (NSDictionary *p in pages) {
-                    NSMutableDictionary *mp = [p mutableCopy];
-                    long long rc = [BRNumValue(p[@"cid"]) longLongValue];
-                    if (rc > 0 && realAid > 0) {
-                        [BRStore rememberCid:rc forAid:realAid];
-                        mp[@"cid"] = @([BRStore fakeCidForReal:rc]);
-                    }
-                    [np addObject:mp];
+        NSDictionary *j = [self jsonFromData:body];
+        if (![j isKindOfClass:[NSDictionary class]]) return body;
+        id dObj = [j objectForKey:@"data"];
+        if (![dObj isKindOfClass:[NSDictionary class]]) return body;
+
+        NSMutableDictionary *d = [dObj mutableCopy];
+        NSDictionary *owner = [d objectForKey:@"owner"];
+        if (![owner isKindOfClass:[NSDictionary class]]) owner = @{};
+
+        if ([d objectForKey:@"author"] == nil && [owner objectForKey:@"name"] != nil)
+            [d setObject:[owner objectForKey:@"name"] forKey:@"author"];
+        if ([d objectForKey:@"mid"] == nil && [owner objectForKey:@"mid"] != nil)
+            [d setObject:[owner objectForKey:@"mid"] forKey:@"mid"];
+        if ([d objectForKey:@"face"] == nil && [owner objectForKey:@"face"] != nil)
+            [d setObject:[owner objectForKey:@"face"] forKey:@"face"];
+        if ([d objectForKey:@"created"] == nil && [d objectForKey:@"pubdate"] != nil)
+            [d setObject:[d objectForKey:@"pubdate"] forKey:@"created"];
+        if ([d objectForKey:@"typename"] == nil && [d objectForKey:@"tname"] != nil)
+            [d setObject:[d objectForKey:@"tname"] forKey:@"typename"];
+
+        id pages = [d objectForKey:@"pages"];
+        if ([pages isKindOfClass:[NSArray class]] && [(NSArray *)pages count]) {
+            id p0 = [(NSArray *)pages objectAtIndex:0];
+            if ([p0 isKindOfClass:[NSDictionary class]]) {
+                for (NSString *k in @[@"cid", @"page", @"part", @"type", @"from",
+                                      @"vid", @"weblink", @"dimension"]) {
+                    if ([d objectForKey:k] == nil && [p0 objectForKey:k] != nil)
+                        [d setObject:[p0 objectForKey:k] forKey:k];
                 }
-                view[@"pages"] = np;
+            }
+            if ([d objectForKey:@"videos"] == nil)
+                [d setObject:@([(NSArray *)pages count]) forKey:@"videos"];
+        }
+
+        NSDictionary *stat = [d objectForKey:@"stat"];
+        if ([stat isKindOfClass:[NSDictionary class]]) {
+            for (NSString *k in @[@"view", @"danmaku", @"reply", @"favorite",
+                                  @"coin", @"share", @"like"]) {
+                if ([d objectForKey:k] == nil && [stat objectForKey:k] != nil)
+                    [d setObject:[stat objectForKey:k] forKey:k];
             }
         }
-        return [self dataFromJSON:[self fixImages:o]];
+
+        if ([d objectForKey:@"aid"] == nil && [d objectForKey:@"avid"] != nil)
+            [d setObject:[d objectForKey:@"avid"] forKey:@"aid"];
+        if ([d objectForKey:@"desc"] == nil)
+            [d setObject:([d objectForKey:@"dynamic"] ?: @"") forKey:@"desc"];
+        if ([d objectForKey:@"state"] == nil)
+            [d setObject:@0 forKey:@"state"];
+
+        NSMutableDictionary *out = [j mutableCopy];
+        [out setObject:d forKey:@"data"];
+        BRINFO(@"[改写] view 已提升字段 (cid=%@ author=%@)",
+               [d objectForKey:@"cid"] ?: @"?", [d objectForKey:@"author"] ?: @"?");
+        return [self dataFromJSON:out];
     }
+
 
     // ---------- 播放地址：把 cid 换成真实值后原样返回 ----------
     // ================= 排行榜（照搬 5.9 参考实现 rank_to_old）=================

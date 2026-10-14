@@ -165,6 +165,8 @@ static void BRRunSelfTest(void) {
             @"http://bangumi.bilibili.com/api/timeline_v2?type=1",
             // ★ 播放地址（playurl 路由）
             @"http://interface.bilibili.com/playurl?aid=170001&cid=279786&qn=32&platform=html5",
+            // ★ 视频详情（验证 view_to_old 的字段提升）
+            @"http://app.bilibili.com/x/web-interface/view?aid=170001",
             nil];
 
         for (NSString *u in urls) {
