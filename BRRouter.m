@@ -98,6 +98,103 @@ static NSString *BRRegionNameForRid(NSString *rid) {
     return n ?: [NSString stringWithFormat:@"分区%@", rid ?: @"?"];
 }
 
+
+// ---------------------------------------------------------------------------
+// 首页分区卡片：插件自己取数据
+//   App 期望首页一次返回所有卡片（推荐 + 各分区），而现代接口只给视频列表，
+//   所以由插件补齐。数据源用 UWP 的 dynamic/child（实测 code=0、有数据）。
+// ---------------------------------------------------------------------------
+
+// 直连 GET（同步；调用方在后台线程 —— 同步路径本来就是后台）
+static NSData *BRRegionHttpGet(NSString *url) {
+    @try {
+        Class reqCls = NSClassFromString(@"NSMutableURLRequest");
+        Class connCls = NSClassFromString(@"NSURLConnection");
+        if (reqCls == Nil || connCls == Nil) return nil;
+        NSURL *u = [NSURL URLWithString:url];
+        if (u == nil) return nil;
+        id rq = [reqCls requestWithURL:u];
+        [rq setTimeoutInterval:8];
+        [rq setValue:@"Mozilla/5.0 BiliDroid/2.0.1 (bbcallen@gmail.com) os/android"
+   forHTTPHeaderField:@"User-Agent"];
+        return [connCls sendSynchronousRequest:rq returningResponse:NULL error:NULL];
+    } @catch (NSException *e) { return nil; }
+}
+
+// 取某分区的若干条视频，并转成老客户端能吃的条目
++ (NSArray *)fetchRegionVideos:(NSString *)rid count:(NSUInteger)want {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        NSString *url = [NSString stringWithFormat:
+            @"https://app.bilibili.com/x/v2/region/dynamic/child"
+            @"?build=6180000&channel=bilih5&mobi_app=win&platform=win"
+            @"&rid=%@&tag_id=0&ts=%lld",
+            rid, (long long)[[NSDate date] timeIntervalSince1970]];
+        NSData *d = BRRegionHttpGet(url);
+        if (d == nil || [d length] < 20) return out;
+        id j = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
+        if (![j isKindOfClass:[NSDictionary class]]) return out;
+        id data = [j objectForKey:@"data"];
+        if (![data isKindOfClass:[NSDictionary class]]) return out;
+        id arr = [data objectForKey:@"new"];
+        if (![arr isKindOfClass:[NSArray class]]) return out;
+
+        for (id it in arr) {
+            if ([out count] >= want) break;
+            if (![it isKindOfClass:[NSDictionary class]]) continue;
+            id aidRaw = [it objectForKey:@"param"] ?: [it objectForKey:@"aid"];
+            id cidRaw = [it objectForKey:@"cid"];
+            if (aidRaw == nil) continue;
+            NSNumber *fake = [BRStore fakeAidForReal:[aidRaw longLongValue]];
+            long long fa = [fake longLongValue];
+            NSNumber *fc = @0;
+            if (cidRaw != nil) {
+                long long f = [BRStore fakeCidForReal:[cidRaw longLongValue]];
+                if (f > 0) {
+                    fc = @(f);
+                    [BRStore rememberCid:f forAid:fa];
+                }
+            }
+            id cover = [it objectForKey:@"cover"] ?: [it objectForKey:@"pic"] ?: @"";
+            id name  = [it objectForKey:@"name"] ?: [it objectForKey:@"author"] ?: @"";
+            NSString *ttl = [it objectForKey:@"title"] ?: @"";
+            long long dur = [[it objectForKey:@"duration"] longLongValue];
+            NSDictionary *one = @{
+                @"title":        ttl,
+                @"author":       name,
+                @"mid":          [it objectForKey:@"mid"] ?: @0,
+                @"face":         [it objectForKey:@"face"] ?: @"",
+                @"cover":        cover,
+                @"pic":          cover,
+                @"param":        [NSString stringWithFormat:@"%lld", fa],
+                @"aid":          @(fa),
+                @"id":           @(fa),
+                @"cid":          fc,
+                @"goto":         @"av",
+                @"card_goto":    @"av",
+                @"card_type":    @"small_cover_v2",
+                @"play":         [it objectForKey:@"play"] ?: @0,
+                @"danmaku":      [it objectForKey:@"danmaku"] ?: @0,
+                @"video_review": [it objectForKey:@"danmaku"] ?: @0,
+                @"favorites":    [it objectForKey:@"favourite"] ?: @0,
+                @"review":       [it objectForKey:@"reply"] ?: @0,
+                @"duration":     BRFmtDuration(@(dur)),
+                @"pubdate":      [it objectForKey:@"pubdate"] ?: @0,
+                @"create":       @"",
+                @"description":  @"",
+                @"bvid":         @"",
+                @"uri":          @"",
+                @"pages":        @1,
+                @"track_id":     @""
+            };
+            [out addObject:one];
+        }
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 取分区 %@ 失败: %@", rid, [e description]);
+    }
+    return out;
+}
+
 @implementation BRRouter
 
 // 把真实 cid 换成假 cid（防 int32 溢出），并记住 cid->aid 反查
@@ -898,10 +995,35 @@ static NSString *BRStripEm(NSString *s) {
                 @"param": @"",
                 @"body":  out
             };
+            NSMutableArray *cards = [NSMutableArray array];
+            [cards addObject:recCard];
+
+            // ★★★ 补上分区推荐卡片。
+            //   用户反馈「首页划不下去，只有推荐那 6 个」——
+            //   因为 App 期望首页一次返回所有卡片（推荐 + 各分区），
+            //   而现代接口只给视频列表，所以由插件自己补齐。
+            NSArray *rids = @[@"4", @"3", @"36", @"5", @"119", @"160"];
+            for (NSString *r in rids) {
+                @try {
+                    NSArray *vs = [BRRouter fetchRegionVideos:r count:4];
+                    if ([vs count] > 0) {
+                        [cards addObject:@{
+                            @"type":  @"recommend",
+                            @"style": @"medium",
+                            @"title": BRRegionNameForRid(r),
+                            @"param": r,
+                            @"body":  vs
+                        }];
+                        BRINFO(@"[改写] 已补分区卡片 %@（%@）%lu 条",
+                               r, BRRegionNameForRid(r), (unsigned long)[vs count]);
+                    }
+                } @catch (NSException *e) { }
+            }
+
             NSMutableDictionary *fixed = [NSMutableDictionary dictionaryWithDictionary:box];
-            [fixed setObject:@[recCard] forKey:@"data"];
-            BRINFO(@"[改写] feed 已包成卡片数组（1 张推荐卡，body %lu 条）",
-                   (unsigned long)[out count]);
+            [fixed setObject:cards forKey:@"data"];
+            BRINFO(@"[改写] feed 已包成卡片数组（共 %lu 张卡片，推荐 %lu 条）",
+                   (unsigned long)[cards count], (unsigned long)[out count]);
             box = fixed;
         };
         BRINFO(@"[改写] feed 输出 %lu 条", (unsigned long)[out count]);
