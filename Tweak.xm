@@ -847,7 +847,15 @@ static void br_hook_login_vcs(void) {
                 //   任何形式的 UI hook（无论挂哪个类、哪种方式）都会导致
                 //   「进入登录页 3 秒后崩溃」或「点输入框崩溃」。
                 //   因此改为显式开关：只有 /tmp/br-loginui 存在时才挂。
-                br_hook_login_vcs();
+                // ★★★ 结论（实测确定）：
+                //   开着 hook 就崩（无论 hook 里做什么），关掉就不崩。
+                //   说明这个 2014 年的 App 在 iOS 7 上的 VC 生命周期
+                //   不能被 hook。因此默认关闭，保证 App 稳定。
+                if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-loginui"]) {
+                    br_hook_login_vcs();
+                } else {
+                    BRINFO(@"登录 UI hook 已关闭（VC 生命周期不可 hook，保证稳定）");
+                }
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");
