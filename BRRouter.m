@@ -599,7 +599,7 @@ static NSString *BRStripEm(NSString *s) {
         NSDictionary *box = @{@"code": @0, @"message": @"0",
                               @"data": @{@"archives": items, @"list": items,
                                          @"num": @([items count]), @"pages": @1,
-                                         @"page": @1, @"size": @([items count] ?: @20)},
+                                         @"page": @1, @"size": ([items count] ? @([items count]) : @20)},
                               @"list": items, @"archives": items};
         BRINFO(@"[改写] region 输出 %lu 条（含 page/size）", (unsigned long)[items count]);
         return [self dataFromJSON:box];
