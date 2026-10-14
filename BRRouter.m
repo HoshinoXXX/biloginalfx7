@@ -298,6 +298,18 @@ static NSString *BRFmtDuration(id d) {
             return r;
         }
 
+        // ★ 开关回退：转换器被禁用时，UWP 通道的 data.new[] 没法转换，
+        //   分区会彻底空白；改走 newlist（响应原生就是 archives[]）。
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noconv"]) {  // [BR_NOCONV_FALLBACK]
+            NSString *ps = qs[@"ps"] ?: qs[@"pagesize"] ?: @"20";
+            r.url = [NSString stringWithFormat:
+                     @"https://api.bilibili.com/x/web-interface/newlist?rid=%@&pn=%@&ps=%@",
+                     rid, pn, ps];
+            r.kind = @"raw";
+            r.note = @"分区（开关回退 newlist）";
+            return r;
+        }
+
         // ★ 真二级分区：UWP 通道
         long long ts = (long long)[[NSDate date] timeIntervalSince1970];
         r.url = [NSString stringWithFormat:
