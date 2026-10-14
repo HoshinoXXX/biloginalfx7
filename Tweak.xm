@@ -251,10 +251,15 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
             [low rangeOfString:@"oauth"].location == NSNotFound) return nil;
 
         // ★ 精确区分：发验证码 vs 短信登录
-        BOOL isSmsSend  = ([low rangeOfString:@"/sms/send"].location != NSNotFound) ||
-                          [low hasSuffix:@"/send"];
-        BOOL isSmsLogin = ([low rangeOfString:@"/login/sms"].location != NSNotFound) ||
-                          (([low rangeOfString:@"/login"].location != NSNotFound) && !isSmsSend);
+        // ★ 精确区分（上一版写得太宽，把密码登录 /api/oauth2/login 也当成
+        //   短信登录，给它加了 device_name/from_pv 等字段 → 参数污染 → 登录失败）
+        BOOL isSmsSend  = ([low rangeOfString:@"/sms/send"].location != NSNotFound);
+        //   只有完整子路径 /login/sms 才算短信登录
+        BOOL isSmsLogin = ([low rangeOfString:@"/login/sms"].location != NSNotFound);
+        //   密码登录（/api/oauth2/login 等）：只补公共字段，不加短信专属字段
+        BOOL isPwdLogin = (([low rangeOfString:@"oauth2/login"].location != NSNotFound) ||
+                           ([low rangeOfString:@"/login"].location != NSNotFound)) &&
+                          (!isSmsSend && !isSmsLogin);
 
         NSMutableDictionary *kv = [NSMutableDictionary dictionary];
         NSMutableArray *order = [NSMutableArray array];
