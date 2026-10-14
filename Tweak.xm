@@ -710,14 +710,16 @@ static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
 
 static void (*o_loginVCDidAppear)(id, SEL, BOOL);
 static void h_loginVCDidAppear(id self, SEL _cmd, BOOL animated) {
-    o_loginVCDidAppear(self, _cmd, animated);
+    // ★ 必须先判 NULL：若该类自己没实现 viewDidAppear:（从父类继承），
+    //   MSHookMessageEx 给出的原函数指针会是 NULL，直接调用就会崩溃。
+    if (o_loginVCDidAppear != NULL) o_loginVCDidAppear(self, _cmd, animated);
     @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }
 }
 
 // 「我的」页面：去掉注册按钮（按用户要求）
 static void (*o_mineVCDidAppear)(id, SEL, BOOL);
 static void h_mineVCDidAppear(id self, SEL _cmd, BOOL animated) {
-    o_mineVCDidAppear(self, _cmd, animated);
+    if (o_mineVCDidAppear != NULL) o_mineVCDidAppear(self, _cmd, animated);
     @try {
         UIView *root = [self isKindOfClass:[NSClassFromString(@"UIViewController") class]]
                      ? [(UIViewController *)self view] : nil;
