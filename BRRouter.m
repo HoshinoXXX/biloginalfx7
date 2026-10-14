@@ -72,6 +72,18 @@ static BOOL BRConvOff(NSString *kind) {
     return NO;
 }
 
+
+// 把真实 cid 换成假 cid（防 int32 溢出），并记住 cid->aid 反查
++ (NSNumber *)fakeCid:(id)cid forAid:(id)aid {
+    long long c = 0, a = 0;
+    if ([cid respondsToSelector:@selector(longLongValue)]) c = [cid longLongValue];
+    if ([aid respondsToSelector:@selector(longLongValue)]) a = [aid longLongValue];
+    if (c <= 0) return @0;
+    long long fc = [BRStore fakeCidForReal:c];
+    if (fc > 0 && a > 0) [BRStore rememberCid:fc forAid:[BRStore fakeAidForReal:a]];
+    return @(fc > 0 ? fc : c);
+}
+
 @implementation BRRouter
 
 #pragma mark - 路由表
@@ -808,7 +820,9 @@ static NSString *BRStripEm(NSString *s) {
                 @"id":          fakeAid ?: [NSNull null],
                 @"aid":         fakeAid ?: [NSNull null],
                 @"bvid":        [it objectForKey:@"bvid"] ?: @"",
-                @"cid":         [it objectForKey:@"cid"] ?: @0,
+                // ★ cid 也必须虚拟化：真实 cid 已 11 位，超 int32 上限，
+                //   直接下发会溢出 → 整条数据被判无效丢弃 → 列表全空（百页）。
+                @"cid":         [self fakeCid:[it objectForKey:@"cid"] forAid:aidRaw],
                 @"title":       [it objectForKey:@"title"] ?: @"",
                 @"cover":       pic,
                 @"pic":         pic,
