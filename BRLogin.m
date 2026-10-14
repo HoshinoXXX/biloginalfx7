@@ -221,52 +221,30 @@ static void BRCollectButtons(UIView *v, NSMutableArray *out) {
     for (UIView *s in [v subviews]) BRCollectButtons(s, out);
 }
 
+// ★★ 崩溃定位版：只遍历 + 统计 + 写日志，**不做任何修改**。
+//    若这一版不崩，说明崩在「修改」的调用上；若仍崩，说明崩在遍历本身。
 void BRRelabelLoginPage(id vc) {
     if (vc == nil) return;
     @try {
         UIView *root = [vc view];
-        if (root == nil) return;
+        if (root == nil) { BRINFO(@"[登录] 页面没 view"); return; }
 
         NSMutableArray *tfs = [NSMutableArray array];
         BRCollectTextFields(root, tfs);
-        for (NSUInteger i = 0; i < [tfs count]; i++) {
-            UITextField *tf = [tfs objectAtIndex:i];
-            if (i == 0) {
-                [tf setPlaceholder:@"输入手机号"];
-                [tf setKeyboardType:3];              // 数字键盘
-            } else if (i == 1) {
-                [tf setPlaceholder:@"验证码"];
-                [tf setSecureTextEntry:NO];           // 验证码不该打点
-                [tf setKeyboardType:3];
-            }
-        }
-
         NSMutableArray *btns = [NSMutableArray array];
         BRCollectButtons(root, btns);
-        BOOL wired = NO;
-        for (UIButton *b in btns) {
-            NSString *t = [b titleForState:0] ?: @"";
-            NSString *t1 = [b titleForState:1] ?: @"";
-            NSString *t2 = [b titleForState:2] ?: @"";
-            if ([t rangeOfString:@"注册"].location != NSNotFound ||
-                [t1 rangeOfString:@"注册"].location != NSNotFound ||
-                [t2 rangeOfString:@"注册"].location != NSNotFound) {
-                [b setTitle:@"发送验证码" forState:0];
-                [b setTitle:@"发送验证码" forState:1];
-                [b setTitle:@"发送验证码" forState:2];
-                [b addTarget:[BRLoginSmsFlow shared]
-                      action:@selector(onSendCode:)
-            forControlEvents:(1 << 6)];                                       // touchUpInside
-                wired = YES;
-                BRINFO(@"[登录] 注册按钮已改为「发送验证码」");
-                break;
-            }
-        }
-        if (!wired) BRDBG(@"[登录] 未找到注册按钮（共 %lu 个按钮）", (unsigned long)[btns count]);
 
-        BRINFO(@"[登录] 登录页已改造：%lu 个输入框", (unsigned long)[tfs count]);
+        NSMutableString *names = [NSMutableString string];
+        for (UIButton *b in btns) {
+            NSString *ti = @"";
+            @try { ti = [b titleForState:0] ?: @""; } @catch (NSException *e) { }
+            [names appendFormat:@"[%@]", ti];
+        }
+        BRINFO(@"[登录] %@ 输入框=%lu 按钮=%lu %@",
+               NSStringFromClass([vc class]),
+               (unsigned long)[tfs count], (unsigned long)[btns count], names);
     } @catch (NSException *e) {
-        BRERR(@"[登录] 改造登录页失败: %@", [e description]);
+        BRERR(@"[登录] 遍历失败: %@", [e description]);
     }
 }
 
