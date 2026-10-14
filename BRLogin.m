@@ -254,7 +254,6 @@ void BRRelabelLoginPage(id vc) {
                 [b setTitle:@"发送验证码" forState:0];
                 [b setTitle:@"发送验证码" forState:1];
                 [b setTitle:@"发送验证码" forState:2];
-                [b removeTarget:nil action:NULL forControlEvents:0x00FFFFFF];  // 断掉原动作(AllEvents)
                 [b addTarget:[BRLoginSmsFlow shared]
                       action:@selector(onSendCode:)
             forControlEvents:(1 << 6)];                                       // touchUpInside

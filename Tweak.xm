@@ -708,27 +708,32 @@ static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
 
 #pragma mark - ★ 登录页改造（短信验证码登录）
 
-// ★★ 关键：每个类都要有【独立】的原函数指针。
-//    上一版用一对全局指针循环挂 3 个类，每挂一次就被覆盖，
-//    导致第一个类的 hook 去调第三个类的原函数 → 调错方法 → 闪退。
+// ★★ 两个必须遵守的原则（都来自实测崩溃）：
+//   ① 每个类必须有【独立】的原函数指针 —— 共用一对全局指针循环挂多个类，
+//      会导致第一个类的 hook 去调第三个类的原函数 → 调错方法 → 崩溃。
+//   ② 绝不在 viewDidLayoutSubviews 里干活 —— 那样会在 QuartzCore 的布局周期里
+//      被调用，触发 dyld 符号绑定失败，直接 EXC_BREAKPOINT(SIGTRAP)。
+//      改为 viewDidAppear 之后用 dispatch_after 延迟补几次。
 #define BR_LOGIN_HOOK(CLS)                                                    \
     static void (*o_did_##CLS)(id, SEL, BOOL);                                \
+    static void br_apply_##CLS(id self, NSTimeInterval delay) {               \
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW,                       \
+            (int64_t)(delay * NSEC_PER_SEC)),                                 \
+            dispatch_get_main_queue(), ^{                                     \
+            @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }    \
+        });                                                                   \
+    }                                                                         \
     static void h_did_##CLS(id self, SEL _cmd, BOOL a) {                      \
         if (o_did_##CLS != NULL) o_did_##CLS(self, _cmd, a);                  \
-        @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }        \
-    }                                                                         \
-    static void (*o_lay_##CLS)(id, SEL);                                      \
-    static void h_lay_##CLS(id self, SEL _cmd) {                              \
-        if (o_lay_##CLS != NULL) o_lay_##CLS(self, _cmd);                     \
-        @try { BRRelabelLoginPage(self); } @catch (NSException *e) { }        \
+        br_apply_##CLS(self, 0.35);                                           \
+        br_apply_##CLS(self, 1.20);                                           \
+        br_apply_##CLS(self, 2.50);                                           \
     }                                                                         \
     static void br_hook_##CLS(void) {                                         \
         Class c = NSClassFromString(@#CLS);                                   \
         if (c == Nil) { BRINFO(@"没有这个类: %@", @#CLS); return; }           \
         MSHookMessageEx(c, @selector(viewDidAppear:),                         \
             (IMP)&h_did_##CLS, (IMP *)&o_did_##CLS);                          \
-        MSHookMessageEx(c, @selector(viewDidLayoutSubviews),                  \
-            (IMP)&h_lay_##CLS, (IMP *)&o_lay_##CLS);                          \
         BRINFO(@"登录页已挂: %@", @#CLS);                                     \
     }
 
@@ -737,9 +742,6 @@ BR_LOGIN_HOOK(BBPhoneUserLoginViewController)
 // iPad（普通版 + HD 版）
 BR_LOGIN_HOOK(BBPadUserLoginViewController)
 BR_LOGIN_HOOK(BBPadHDUserLoginViewController)
-// 兜底：可能存在的其它命名
-BR_LOGIN_HOOK(BBPhoneUserLoginViewControllerV2)
-BR_LOGIN_HOOK(BBPadUserLoginViewControllerV2)
 
 %ctor
 {
@@ -827,8 +829,6 @@ BR_LOGIN_HOOK(BBPadUserLoginViewControllerV2)
                 br_hook_BBPhoneUserLoginViewController();
                 br_hook_BBPadUserLoginViewController();
                 br_hook_BBPadHDUserLoginViewController();
-                br_hook_BBPhoneUserLoginViewControllerV2();
-                br_hook_BBPadUserLoginViewControllerV2();
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");
