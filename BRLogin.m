@@ -209,17 +209,7 @@ NSData *BRDirectGet(NSString *urlStr, NSInteger *statusOut) {
 
 static char kBRLoginDoneKey;
 
-static void BRCollectTextFields(UIView *v, NSMutableArray *out) {
-    if (v == nil) return;
-    if ([v isKindOfClass:[UITextField class]]) [out addObject:v];
-    for (UIView *s in [v subviews]) BRCollectTextFields(s, out);
-}
 
-static void BRCollectButtons(UIView *v, NSMutableArray *out) {
-    if (v == nil) return;
-    if ([v isKindOfClass:[UIButton class]]) [out addObject:v];
-    for (UIView *s in [v subviews]) BRCollectButtons(s, out);
-}
 
 static void BRCollectTextFields(UIView *v, NSMutableArray *out) {
     if (v == nil) return;
