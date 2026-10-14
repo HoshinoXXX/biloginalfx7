@@ -847,11 +847,7 @@ static void br_hook_login_vcs(void) {
                 //   任何形式的 UI hook（无论挂哪个类、哪种方式）都会导致
                 //   「进入登录页 3 秒后崩溃」或「点输入框崩溃」。
                 //   因此改为显式开关：只有 /tmp/br-loginui 存在时才挂。
-                if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-loginui"]) {
-                    br_hook_login_vcs();
-                } else {
-                    BRINFO(@"登录 UI hook 默认关闭（稳定优先）");
-                }
+                br_hook_login_vcs();
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");

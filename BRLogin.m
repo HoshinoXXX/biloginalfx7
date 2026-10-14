@@ -242,13 +242,16 @@ void BRRelabelLoginPage(id vc) {
         for (NSUInteger i = 0; i < [tfs count]; i++) {
             UITextField *tf = [tfs objectAtIndex:i];
             @try {
+                // ★★★ 只改文字！
+                //   用户反馈「3 秒闪退是因为点进登录会自动触发输入框」——
+                //   登录页会自动让输入框成为第一响应者。
+                //   我之前还改了 setSecureTextEntry 与 setKeyboardType，
+                //   导致该字段的状态与 App 期望不一致 → 聚焦时崩溃。
+                //   所以这里绝不能碰属性，只改 placeholder。
                 if (i == 0) {
                     [tf setPlaceholder:@"输入手机号"];
-                    [tf setKeyboardType:3];
                 } else if (i == 1) {
                     [tf setPlaceholder:@"验证码"];
-                    [tf setSecureTextEntry:NO];
-                    [tf setKeyboardType:3];
                 }
             } @catch (NSException *e) { }
         }
