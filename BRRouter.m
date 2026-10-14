@@ -278,7 +278,72 @@ static NSString *BRFmtDuration(id d) {
         return r;
     }
 
-        // ================= [BR_ADDED_ROUTES] 按 5.9 参考实现补齐的路由 =================
+            // ================= [BR_ADDED_TAG_ROUTES] 标签 / 相关推荐 / 热搜 =================
+
+    // ---- 视频相关推荐（★ 老 x/v2/related 已失效 → 「有的視頻不見了」）----
+    if ([path isEqualToString:@"/x/v2/related"] ||
+        [path isEqualToString:@"/x/v2/archive/related"] ||
+        [path isEqualToString:@"/x/web-interface/archive/related"] ||
+        [path isEqualToString:@"/x/v2/view/related"]) {
+        NSString *aid = qs[@"aid"] ?: qs[@"avid"] ?: @"";
+        long long real = [BRStore realAidForFake:[aid longLongValue]];
+        if (real > 0) aid = [NSString stringWithFormat:@"%lld", real];
+        r.url = [NSString stringWithFormat:
+                 @"https://api.bilibili.com/x/web-interface/archive/related?aid=%@", aid];
+        r.kind = @"raw";
+        r.note = @"相关推荐";
+        return r;
+    }
+
+    // ---- 热门标签 / 热搜（★ 参考实现实测：老 x/tag/hots 的 412 高达 60 次，
+    //      是日志里失败最多的接口，必须改走热搜榜）----
+    if ([path isEqualToString:@"/x/tag/hots"] ||
+        [path isEqualToString:@"/x/v2/tag/hots"] ||
+        [path isEqualToString:@"/x/tag/hot"] ||
+        [path isEqualToString:@"/x/v2/search/hot"] ||
+        [path isEqualToString:@"/x/web-interface/search/square"]) {
+        r.url = [BRSession wbiSignURL:
+                 @"https://api.bilibili.com/x/web-interface/search/square?limit=10"];
+        r.kind = @"raw";
+        r.note = @"热门标签/热搜";
+        return r;
+    }
+
+    // ---- 视频标签（老 x/v2/tag 已失效）----
+    if ([path isEqualToString:@"/x/v2/tag"] ||
+        [path isEqualToString:@"/x/tag/archive/tags"]) {
+        NSString *aid = qs[@"aid"] ?: qs[@"avid"] ?: @"";
+        long long real = [BRStore realAidForFake:[aid longLongValue]];
+        if (real > 0) aid = [NSString stringWithFormat:@"%lld", real];
+        r.url = [NSString stringWithFormat:
+                 @"https://api.bilibili.com/x/tag/archive/tags?aid=%@", aid];
+        r.kind = @"raw";
+        r.note = @"视频标签";
+        return r;
+    }
+
+    // ---- 分出/专题：用标签名去搜索（伪二级分区）----
+    // ★ 参考实现警告：wbiSignURL 内部会再编码一次，必须传原始关键词，
+    //   否则 % 会被编成 %25（双重编码）→ 服务端收到乱码 → 返回无关结果
+    if ([path isEqualToString:@"/x/v2/region/show"] ||
+        [path isEqualToString:@"/x/v2/region/tag"] ||
+        [path isEqualToString:@"/x/v2/region/show/tag"] ||
+        [path isEqualToString:@"/x/v2/tag/archives"] ||
+        [path isEqualToString:@"/x/tag/archives"]) {
+        NSString *tag = qs[@"tag_name"] ?: qs[@"tag"] ?: qs[@"keyword"];
+        if ([tag length]) {
+            NSString *pn = qs[@"pn"] ?: @"1";
+            NSString *b = [NSString stringWithFormat:
+                           @"https://api.bilibili.com/x/web-interface/wbi/search/type"
+                           @"?search_type=video&keyword=%@&page=%@", tag, pn];
+            r.url = [BRSession wbiSignURL:b];
+            r.kind = @"region";
+            r.note = @"专题/标签（伪分区）";
+            return r;
+        }
+    }
+
+    // ================= [BR_ADDED_ROUTES] 按 5.9 参考实现补齐的路由 =================
 
     // ---- 直播：老接口已失效，统一映射到实测可用的新接口 ----
     // ★ live 域名是 APP 签名体系，不能套 wbi（会 412）
