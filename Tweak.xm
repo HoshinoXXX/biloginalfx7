@@ -563,6 +563,83 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
 #pragma mark - 装载
 
 // 每一步单独 try，绝不因为某一步失败而让整个初始化抛出
+
+#pragma mark - ★★★ NSURLSession 挂钩（App 大量使用，之前完全没覆盖）
+
+static id (*o_dataTaskReq)(id, SEL, NSURLRequest *);
+static id (*o_dataTaskReqCH)(id, SEL, NSURLRequest *,
+                             void (^)(NSData *, NSURLResponse *, NSError *));
+static id (*o_dataTaskURL)(id, SEL, NSURL *);
+static id (*o_dataTaskURLCH)(id, SEL, NSURL *,
+                             void (^)(NSData *, NSURLResponse *, NSError *));
+
+// block 版：改写请求 + 包一层响应转换
+static id h_dataTaskReqCH(id self, SEL _cmd, NSURLRequest *req,
+                          void (^h)(NSData *, NSURLResponse *, NSError *)) {
+    @try {
+        if (req == nil || h == nil) {
+            if (h == nil) return o_dataTaskReqCH(self, _cmd, req, h);
+        }
+        BRRoute *route = nil;
+        NSURLRequest *brq = BRRewriteRequestEx(req, &route);
+        if (route == nil || route.kind == nil || h == nil) {
+            return o_dataTaskReqCH(self, _cmd, brq, h);
+        }
+        NSString *kind = [route.kind copy];
+        void (^wrapped)(NSData *, NSURLResponse *, NSError *) =
+            ^(NSData *d, NSURLResponse *r, NSError *e) {
+                NSData *out = d;
+                @try {
+                    if (d != nil && kind != nil) {
+                        BRRoute *rr = [[BRRoute alloc] init];
+                        rr.kind = kind;
+                        NSData *c = [BRRouter convertResponse:d forRoute:rr];
+                        if (c != nil) out = c;
+                    }
+                } @catch (NSException *ex) { }
+                h(out, r, e);
+            };
+        return o_dataTaskReqCH(self, _cmd, brq, wrapped);
+    } @catch (NSException *e) {
+        BRERR(@"[NSURLSession] dataTask(CH) 异常: %@", [e description]);
+    }
+    return o_dataTaskReqCH(self, _cmd, req, h);
+}
+
+// delegate 版：只改写请求（响应由 session 的 delegate 收，无法在此包）
+static id h_dataTaskReq(id self, SEL _cmd, NSURLRequest *req) {
+    @try {
+        NSURLRequest *brq = BRRewriteRequest(req);
+        return o_dataTaskReq(self, _cmd, brq);
+    } @catch (NSException *e) {
+        BRERR(@"[NSURLSession] dataTask 异常: %@", [e description]);
+    }
+    return o_dataTaskReq(self, _cmd, req);
+}
+
+static id h_dataTaskURLCH(id self, SEL _cmd, NSURL *u,
+                          void (^h)(NSData *, NSURLResponse *, NSError *)) {
+    @try {
+        if (u == nil) return o_dataTaskURLCH(self, _cmd, u, h);
+        NSString *host = [u host];
+        if (!BRIsBiliHost(host)) return o_dataTaskURLCH(self, _cmd, u, h);
+        Class reqCls = NSClassFromString(@"NSURLRequest");
+        if (reqCls == Nil) return o_dataTaskURLCH(self, _cmd, u, h);
+        NSURLRequest *req = [reqCls requestWithURL:u];
+        return h_dataTaskReqCH(self, _cmd, req, h);
+    } @catch (NSException *e) { }
+    return o_dataTaskURLCH(self, _cmd, u, h);
+}
+
+static id h_dataTaskURL(id self, SEL _cmd, NSURL *u) {
+    @try {
+        if (u == nil) return o_dataTaskURL(self, _cmd, u);
+        NSURLRequest *req = [NSClassFromString(@"NSURLRequest") requestWithURL:u];
+        if (req != nil) return h_dataTaskReq(self, _cmd, req);
+    } @catch (NSException *e) { }
+    return o_dataTaskURL(self, _cmd, u);
+}
+
 %ctor
 {
     @autoreleasepool {
@@ -629,6 +706,21 @@ static id h_initWithRequestStart(id self, SEL _cmd, NSURLRequest *req, id delega
                     (IMP)&h_initWithRequestStart, (IMP *)&o_initWithRequestStart);
                 BRMark("06 NSURLConnection 4 个入口已挂载");
                 BRINFO(@"NSURLConnection 已挂载");
+                // ★★★ NSURLSession 挂钩（App 大量使用；之前完全没覆盖）
+                Class sessCls = NSClassFromString(@"NSURLSession");
+                if (sessCls != Nil) {
+                    MSHookMessageEx(sessCls, @selector(dataTaskWithRequest:),
+                        (IMP)&h_dataTaskReq, (IMP *)&o_dataTaskReq);
+                    MSHookMessageEx(sessCls, @selector(dataTaskWithRequest:completionHandler:),
+                        (IMP)&h_dataTaskReqCH, (IMP *)&o_dataTaskReqCH);
+                    MSHookMessageEx(sessCls, @selector(dataTaskWithURL:),
+                        (IMP)&h_dataTaskURL, (IMP *)&o_dataTaskURL);
+                    MSHookMessageEx(sessCls, @selector(dataTaskWithURL:completionHandler:),
+                        (IMP)&h_dataTaskURLCH, (IMP *)&o_dataTaskURLCH);
+                    BRINFO(@"NSURLSession 已挂载");
+                } else {
+                    BRINFO(@"找不到 NSURLSession");
+                }
             } else {
                 BRMark("06 找不到 NSURLConnection");
             }
