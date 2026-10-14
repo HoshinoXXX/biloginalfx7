@@ -99,6 +99,9 @@ static NSString *BRRegionNameForRid(NSString *rid) {
 }
 
 
+
+@implementation BRRouter
+
 // ---------------------------------------------------------------------------
 // 首页分区卡片：插件自己取数据
 //   App 期望首页一次返回所有卡片（推荐 + 各分区），而现代接口只给视频列表，
@@ -194,8 +197,6 @@ static NSData *BRRegionHttpGet(NSString *url) {
     }
     return out;
 }
-
-@implementation BRRouter
 
 // 把真实 cid 换成假 cid（防 int32 溢出），并记住 cid->aid 反查
 + (NSNumber *)fakeCid:(id)cid forAid:(id)aid {
