@@ -829,7 +829,6 @@ BR_LOGIN_HOOK(BBPadUserLoginViewControllerV2)
                 br_hook_BBPadHDUserLoginViewController();
                 br_hook_BBPhoneUserLoginViewControllerV2();
                 br_hook_BBPadUserLoginViewControllerV2();
-                }
                 // 「我的」页 hook 暂停：类名尚未找到，且同样有全局指针风险
                 } else {
                     BRINFO(@"找不到 NSURLSession");
