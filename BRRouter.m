@@ -706,6 +706,14 @@ static NSString *BRStripEm(NSString *s) {
     //   /tmp/br-noconv         关全部
     //   /tmp/br-noconv-<kind>  只关某一类（feed/search/rank/view/region/playurl）
     //   这样不重新编译就能逐个验证是哪个转换器的问题。
+
+    {
+        if (BRConvOff(route.kind)) {
+            BRDBG(@"[改写] 转换器被开关禁用: %@", route.kind);
+            return body;
+        }
+    }
+
     // ★ 先做 ID 虚拟化（与结构无关，永远生效，防止 int32 溢出）
     {
         NSDictionary *jj = [self jsonFromData:body];
@@ -713,13 +721,6 @@ static NSString *BRStripEm(NSString *s) {
             id v = [BRRouter virtualizeAids:jj];
             NSData *vd = [self dataFromJSON:v];
             if (vd != nil) body = vd;
-        }
-    }
-
-    {
-        if (BRConvOff(route.kind)) {
-            BRDBG(@"[改写] 转换器被开关禁用: %@", route.kind);
-            return body;
         }
     }
 
