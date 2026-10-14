@@ -73,6 +73,9 @@ static BOOL BRConvOff(NSString *kind) {
 }
 
 
+
+@implementation BRRouter
+
 // 把真实 cid 换成假 cid（防 int32 溢出），并记住 cid->aid 反查
 + (NSNumber *)fakeCid:(id)cid forAid:(id)aid {
     long long c = 0, a = 0;
@@ -83,8 +86,6 @@ static BOOL BRConvOff(NSString *kind) {
     if (fc > 0 && a > 0) [BRStore rememberCid:fc forAid:[BRStore fakeAidForReal:a]];
     return @(fc > 0 ? fc : c);
 }
-
-@implementation BRRouter
 
 #pragma mark - 路由表
 
