@@ -856,7 +856,7 @@ static NSString *BRStripEm(NSString *s) {
         // ★ 容器：data / item / items 三个键都要给同一个数组
         NSDictionary *box = @{@"code": @0, @"message": @"0",
                               @"data": out, @"item": out, @"items": out,
-                              @"num": @([out count])}
+                              @"num": @([out count])};
 
         // ★★★ 关键修正：首页是**卡片数组**，不是视频数组。
         //   依据：App 自带的 home_init/config（用户也确认：
