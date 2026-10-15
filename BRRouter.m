@@ -203,11 +203,12 @@ static NSData *BRRegionHttpGet(NSString *url) {
                 @"pubdate":      [it objectForKey:@"pubdate"] ?: @0,
                 @"create":       @"",
                 @"description":  @"",
-                @"bvid":         bvid,
-                // ★ 原生 scheme；有 bvid 时优先用 bvid（新版路由更认它）
-                @"uri":          ([bvid length]
-                                   ? [NSString stringWithFormat:@"bilibili://video/%@", bvid]
-                                   : [NSString stringWithFormat:@"bilibili://video/%lld", fa]),
+                // ★★★ bvid 必须留空！
+                //   aid 已虚拟化（能映射回真值），而 bvid 是真值。
+                //   两者并存时 App 优先用 bvid 打开 → 响应里带回真实 15 位 aid
+                //   → 进 App 的 int32 字段溢出成垃圾 → 后续 playurl/reply 全失败。
+                @"bvid":         @"",
+                @"uri":          [NSString stringWithFormat:@"bilibili://video/%lld", fa],
                 @"pages":        @1,
                 @"track_id":     @""
             };
@@ -1003,7 +1004,8 @@ static NSString *BRStripEm(NSString *s) {
                 @"uri":         uri ?: @"",
                 @"id":          fakeAid ?: [NSNull null],
                 @"aid":         fakeAid ?: [NSNull null],
-                @"bvid":        [it objectForKey:@"bvid"] ?: @"",
+                // ★ 同上：bvid 留空，避免与虚拟化后的 aid 不一致导致 int32 溢出
+                @"bvid":        @"",
                 // ★ cid 也必须虚拟化：真实 cid 已 11 位，超 int32 上限，
                 //   直接下发会溢出 → 整条数据被判无效丢弃 → 列表全空（百页）。
                 @"cid":         [self fakeCid:[it objectForKey:@"cid"] forAid:aidRaw],
