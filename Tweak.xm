@@ -557,7 +557,6 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
             // ★ 告诉转换器「原始响应是不是 gzip」，
             //   否则我们会拿压缩体当 JSON 解析而失败
             //   （日志里 head=空 就是这个原因）。
-            extern BOOL gBRRespWasGzip;
             // 就地判断是否 gzip（BRIsGzipResponse 在 BRRouter.m 里是 static，这里看不到）
             gBRRespWasGzip = NO;
             @try {

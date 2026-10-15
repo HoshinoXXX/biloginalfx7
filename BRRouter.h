@@ -31,6 +31,9 @@
 + (NSDictionary *)jsonFromData:(NSData *)d;
 + (NSData *)dataFromJSON:(id)obj;
 + (NSData *)gunzip:(NSData *)src;
+
+// 由 Tweak.xm 在调用 convertResponse 前设置：原始响应是否 gzip
+extern BOOL gBRRespWasGzip;
 + (NSNumber *)fakeCid:(id)cid forAid:(id)aid;
 // 递归把 protocol-relative 的图片地址补上 http: 前缀
 + (id)fixImages:(id)obj;
