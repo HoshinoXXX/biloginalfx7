@@ -247,6 +247,18 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
     }
 
     // ================= 首页 / 推荐流 =================
+    // ★★★ 首页改为「走它自己的原接口」（用户建议：
+    //   「套用原版的排版和框架，然後用新 API 加個 AV 和 BV 的轉換」）。
+    //   原因：自己拼卡片（wbi feed 是视频列表，需重组成卡片数组）很难与
+    //   App 的排版框架完全对齐，实测渲染那一步就崩。
+    //   而 /x/v2/region 已实测「原样透传」能拿到正确的老格式，
+    //   所以首页也先试原接口，让 App 用它自己的排版。
+    //   想回到新 feed 对比时：touch /tmp/br-newhome
+    if ([path isEqualToString:@"/x/v2/show"] &&
+        ![[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-newhome"]) {
+        BRINFO(@"[改写] /x/v2/show 走原接口（原版排版+框架，仅做 ID 虚拟化）");
+        return nil;
+    }
     if ([path isEqualToString:@"/x/v2/feed/index"] ||
         [path isEqualToString:@"/x/web-interface/index/top/rcmd"] ||
         [path isEqualToString:@"/x/v2/show"] ||
