@@ -663,6 +663,15 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         return nil;
     }
 
+    // ★★★ /region/show/dynamic 是「二级/动态分区」，不是一级分区。
+    //   实测日志：App 请求它，我却把它路由成「一级分区(newlist rid=4 pn=2)」
+    //   → 拿到的是某个一级分区的内容 → 界面没内容/排版错。
+    //   这里不改写，保持透传。
+    if ([path rangeOfString:@"/region/show/dynamic"].location != NSNotFound) {
+        BRINFO(@"[改写] /x/v2/region/show/dynamic 是二级/动态分区 → 原样透传");
+        return nil;
+    }
+
     BRRoute *r = [[BRRoute alloc] init];
     NSString *rid = qs[@"rid"] ?: qs[@"tag_id"] ?: qs[@"tid"] ?: @"1";
     NSString *pn  = qs[@"pn"] ?: qs[@"page"] ?: @"1";
@@ -1286,12 +1295,13 @@ static NSString *BRStripEm(NSString *s) {
             NSString *pnNow = [route.extra objectForKey:@"pn"];
             BOOL brIsRefresh = (pnNow != nil && [pnNow integerValue] >= 2);
             if (brIsRefresh && [regItems isKindOfClass:[NSArray class]]) {
+                // ★ 只放 data（外加 archives 作兼容别名）。
+                //   之前放了 data/archives/list/item/items 五个键，
+                //   JSON 序列化会把同一份数组写 5 遍 → 体积翻倍
+                //   （实测：27693 -> 51084 字节）。
                 NSMutableDictionary *plain = [NSMutableDictionary dictionaryWithDictionary:box];
                 [plain setObject:regItems forKey:@"data"];
                 [plain setObject:regItems forKey:@"archives"];
-                [plain setObject:regItems forKey:@"list"];
-                [plain setObject:regItems forKey:@"item"];
-                [plain setObject:regItems forKey:@"items"];
                 box = plain;
                 BRINFO(@"[改写] region 刷新(pn=%@) → 返回普通列表 %lu 条",
                        pnNow, (unsigned long)[regItems count]);
