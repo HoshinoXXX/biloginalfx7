@@ -153,6 +153,7 @@ static NSData *BRRegionHttpGet(NSString *url) {
             if (![it isKindOfClass:[NSDictionary class]]) continue;
             id aidRaw = [it objectForKey:@"aid"] ?: [it objectForKey:@"param"];
             id cidRaw = [it objectForKey:@"cid"];
+            if (cidRaw == nil) cidRaw = [it objectForKey:@"cid_str"];
             if (aidRaw == nil) continue;
             // ★ 注意：BRStore 这两个方法返回的是 long long，不是 NSNumber*
             long long fa = [BRStore fakeAidForReal:[aidRaw longLongValue]];
@@ -164,6 +165,11 @@ static NSData *BRRegionHttpGet(NSString *url) {
                     [BRStore rememberCid:f forAid:fa];
                 }
             }
+            // ★ 新版 App 优先用 bvid 打开视频，
+            //   之前我把 bvid 填成空串 → 分区视频点不进去
+            //   （用户反馈：「只有推荐的可以」）。
+            NSString *bvid = [it objectForKey:@"bvid"] ?: @"";
+            if (![bvid length]) bvid = [it objectForKey:@"bv_id"] ?: @"";
             id cover = [it objectForKey:@"cover"] ?: [it objectForKey:@"pic"] ?: @"";
             id name  = [it objectForKey:@"name"] ?: [it objectForKey:@"author"] ?: @"";
             NSString *ttl = [it objectForKey:@"title"] ?: @"";
@@ -191,9 +197,11 @@ static NSData *BRRegionHttpGet(NSString *url) {
                 @"pubdate":      [it objectForKey:@"pubdate"] ?: @0,
                 @"create":       @"",
                 @"description":  @"",
-                @"bvid":         @"",
-                // ★ 必须给原生 scheme！之前空着导致分区视频点不进去
-                @"uri":          [NSString stringWithFormat:@"bilibili://video/%lld", fa],
+                @"bvid":         bvid,
+                // ★ 原生 scheme；有 bvid 时优先用 bvid（新版路由更认它）
+                @"uri":          ([bvid length]
+                                   ? [NSString stringWithFormat:@"bilibili://video/%@", bvid]
+                                   : [NSString stringWithFormat:@"bilibili://video/%lld", fa]),
                 @"pages":        @1,
                 @"track_id":     @""
             };
