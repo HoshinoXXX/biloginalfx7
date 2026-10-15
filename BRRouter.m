@@ -1015,14 +1015,18 @@ static NSString *BRStripEm(NSString *s) {
                 @try {
                     NSArray *vs = [BRRouter fetchRegionVideos:r count:4];
                     if ([vs count] > 0) {
+                        // ★★★ type 必须是 region！
+                        //   用 recommend 的话 App 会把它当成「热门推荐」板块渲染
+                        //   （用户反馈：「全是熱門推薦板塊」）。
+                        //   老首页的分区推荐卡片用 region，靠 param(rid) 关联。
                         [cards addObject:@{
-                            @"type":  @"recommend",
+                            @"type":  @"region",
                             @"style": @"medium",
                             @"title": BRRegionNameForRid(r),
                             @"param": r,
                             @"body":  vs
                         }];
-                        BRINFO(@"[改写] 已补分区卡片 %@（%@）%lu 条",
+                        BRINFO(@"[改写] 已补分区卡片 type=region %@（%@）%lu 条",
                                r, BRRegionNameForRid(r), (unsigned long)[vs count]);
                     }
                 } @catch (NSException *e) { }
