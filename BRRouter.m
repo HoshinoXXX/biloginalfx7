@@ -188,11 +188,14 @@ static NSData *BRRegionHttpGet(NSString *url) {
                 @"goto":         @"av",
                 @"card_goto":    @"av",
                 @"card_type":    @"small_cover_v2",
-                @"play":         [it objectForKey:@"play"] ?: @0,
-                @"danmaku":      [it objectForKey:@"danmaku"] ?: @0,
-                @"video_review": [it objectForKey:@"danmaku"] ?: @0,
-                @"favorites":    [it objectForKey:@"favourite"] ?: @0,
-                @"review":       [it objectForKey:@"reply"] ?: @0,
+                // ★ newlist 把播放量/弹幕放在 stat 子字典里
+                //   （stat.view / stat.danmaku），之前取顶层导致全是 0
+                //   （用户反馈：「分区视频預览不顯示播放量和彈幕」）。
+                @"play":         [stat objectForKey:@"view"] ?: [it objectForKey:@"play"] ?: @0,
+                @"danmaku":      [stat objectForKey:@"danmaku"] ?: [it objectForKey:@"danmaku"] ?: @0,
+                @"video_review": [stat objectForKey:@"danmaku"] ?: @0,
+                @"favorites":    [stat objectForKey:@"favorite"] ?: [it objectForKey:@"favourite"] ?: @0,
+                @"review":       [stat objectForKey:@"reply"] ?: [it objectForKey:@"reply"] ?: @0,
                 @"duration":     BRFmtDuration(@(dur)),
                 @"pubdate":      [it objectForKey:@"pubdate"] ?: @0,
                 @"create":       @"",
