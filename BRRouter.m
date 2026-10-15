@@ -210,8 +210,8 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         //   于是 aid/cid 虚拟化、stat 取值、uri 构造全部走同一份代码
         //   （用户建议：「不能用一個框架嗎，變量用不同的」）。
         BRRoute *tmp = [[BRRoute alloc] init];
-        tmp.kind = @"feed";
-        tmp.note = @"分区(复用feed流水线)";
+        tmp.kind = @"newlistx";          // [BRNEWLISTX] 专用转换器（不是 feed！）
+        tmp.note = @"分区(newlistx 专用转换)";
         NSData *conv = nil;
         // ★ 防递归用 route 上的标记（而不是全局变量）：
         //   convertResponse:forRoute: 本来就接收 route，天然按调用隔离，
@@ -220,20 +220,24 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         conv = [BRRouter convertResponse:d forRoute:tmp];
         if (conv == nil) conv = d;
         NSDictionary *cj = [BRRouter jsonFromData:conv];
-        NSArray *cards = [cj objectForKey:@"data"];
-        if ([cards isKindOfClass:[NSArray class]] && [cards count] > 0) {
-            id first = [cards objectAtIndex:0];
-            if ([first isKindOfClass:[NSDictionary class]]) {
-                id body = [first objectForKey:@"body"];
-                if ([body isKindOfClass:[NSArray class]]) {
-                    for (id one in body) {
-                        if ([out count] >= want) break;
-                        [out addObject:one];
-                    }
-                }
-            }
+        // [BRNEWLISTX] newlistx 的输出是 data.archives（不是 data[0].body）
+        NSArray *items = nil;
+        id cdd = [cj objectForKey:@"data"];
+        if ([cdd isKindOfClass:[NSDictionary class]]) {
+            id ar = [cdd objectForKey:@"archives"];
+            if ([ar isKindOfClass:[NSArray class]]) items = ar;
         }
-        BRDBG(@"[改写] 分区 %@ 复用 feed 流水线得到 %lu 条", rid, (unsigned long)[out count]);
+        if (items == nil) {
+            id ar2 = [cj objectForKey:@"archives"];
+            if ([ar2 isKindOfClass:[NSArray class]]) items = ar2;
+        }
+        for (id one in items) {
+            if (![one isKindOfClass:[NSDictionary class]]) continue;
+            if ([out count] >= want) break;
+            [out addObject:one];
+        }
+        BRINFO(@"[改写] 分区 %@ 取到 %lu 条（want=%lu）", rid,
+               (unsigned long)[out count], (unsigned long)want);
 
         // ★ 写缓存
         @try {
@@ -958,6 +962,12 @@ static NSString *BRStripEm(NSString *s) {
 
     // [BROLDHOME] 首页：填充各分区卡片的空 body
     if ([route.kind isEqualToString:@"oldhome"]) {
+        // [BRNEWLISTX] 安全开关：/tmp/br-fill-off 存在时完全不碰首页，
+        //   保证 App 稳定（分区卡片会是空的，但绝不崩）。
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-fill-off"]) {
+            BRINFO(@"[改写] oldhome 填充已被 /tmp/br-fill-off 关闭，原样透传");
+            return body;
+        }
         @try {
             NSDictionary *oh = [self jsonFromData:body];
             if (oh == nil) {
@@ -1036,6 +1046,7 @@ static NSString *BRStripEm(NSString *s) {
                     filled++;
                     BRINFO(@"[改写] oldhome 已填 %@（rid=%@）%lu 条", ttl, rid,
                            (unsigned long)[vs count]);
+                    BRINFO(@"[改写] oldhome 填进去的第一个元素: %@", [vs objectAtIndex:0]);
                 }
             }
             NSMutableDictionary *out = [NSMutableDictionary dictionaryWithDictionary:oh];
@@ -1082,6 +1093,76 @@ static NSString *BRStripEm(NSString *s) {
             o[@"data"] = d;
             if ([o[@"code"] integerValue] == -101) o[@"code"] = @0;
             BRINFO(@"nav 已注入登录态");
+        }
+        return [self dataFromJSON:[self fixImages:o]];
+    }
+
+    // [BRNEWLISTX] 分区数据专用转换器。
+    //   newlist 的原生结构是 {"code":0,"data":{"archives":[...]}} ——
+    //   既不是 data.items，也不是 data 数组，所以**绝不能**塞给 feed 分支
+    //   （那正是「填不进去、没有『已填』日志」的原因）。
+    //   这里输出严格等于 App 自带 home_init/config 里的元素结构：
+    //     {title, cover, param, play, danmaku, finish}
+    //   型别也必须一致（play/danmaku/finish 是数字，title/cover/param 是字符串），
+    //   否则老客户端渲染时会 EXC_CRASH (SIGILL)。
+    if ([kind isEqualToString:@"newlistx"]) {
+        NSDictionary *j = [self jsonFromData:body];
+        NSDictionary *dd = [j objectForKey:@"data"];
+        NSArray *src = nil;
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id ar = [dd objectForKey:@"archives"];
+            if ([ar isKindOfClass:[NSArray class]]) src = ar;
+            if (src == nil) {
+                id li = [dd objectForKey:@"list"];
+                if ([li isKindOfClass:[NSArray class]]) src = li;
+            }
+        } else if ([dd isKindOfClass:[NSArray class]]) {
+            src = dd;
+        }
+        NSMutableArray *out = [NSMutableArray array];
+        for (id raw in src) {
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *it = raw;
+
+            // param = 虚拟化后的 aid（老客户端 avid 是 int32，真实 15 位 aid 会溢出）
+            id aidRaw = [it objectForKey:@"aid"];
+            if (aidRaw == nil) aidRaw = [it objectForKey:@"id"];
+            long long aidLL = 0;
+            if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+            else if ([aidRaw isKindOfClass:[NSString class]]) aidLL = [(NSString *)aidRaw longLongValue];
+            long long fakeAidLL = [BRStore fakeAidForReal:aidLL];
+            if (fakeAidLL <= 0) continue;            // 没有可用 aid 的条目直接跳过
+
+            NSDictionary *stat = [it objectForKey:@"stat"];
+            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
+
+            NSString *pic = BRPicFix([it objectForKey:@"pic"] ?: [it objectForKey:@"cover"] ?: @"");
+            // App 自带 config 里分区卡的 cover 带 _320x200.jpg 缩略图规格
+            if ([pic length] > 0 && [pic rangeOfString:@"_320x200"].location == NSNotFound
+                && [pic rangeOfString:@"hdslb.com"].location != NSNotFound) {
+                pic = [pic stringByAppendingString:@"_320x200.jpg"];
+            }
+
+            [out addObject:@{
+                @"title":   [it objectForKey:@"title"] ?: @"",
+                @"cover":   pic ?: @"",
+                @"param":   [NSString stringWithFormat:@"%lld", fakeAidLL],
+                @"play":    [stat objectForKey:@"view"]    ?: @0,
+                @"danmaku": [stat objectForKey:@"danmaku"] ?: @0,
+                @"finish":  @0,
+            }];
+        }
+        NSDictionary *o = @{
+            @"code":    @0,
+            @"message": @"0",
+            @"data": @{@"archives": out, @"list": out,
+                       @"num": @([out count]), @"page": @1, @"size": @([out count])},
+            @"archives": out,
+            @"list": out,
+        };
+        BRINFO(@"[改写] newlistx 转换完成：%lu 条", (unsigned long)[out count]);
+        if ([out count] > 0) {
+            BRINFO(@"[改写] newlistx 元素样本: %@", [out objectAtIndex:0]);
         }
         return [self dataFromJSON:[self fixImages:o]];
     }
