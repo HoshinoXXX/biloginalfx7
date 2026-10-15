@@ -34,7 +34,6 @@
 #import "BRURLProtocol.h"
 #import "BRRouter.h"
 #import "BRZlib.h"   // [BRZLIB_RUNTIME]
-#import "BRZlib.h"
 
 #pragma mark - 里程碑（完全独立，不依赖任何插件代码）
 
@@ -129,6 +128,8 @@ static void BRReleaseProxy(id px) {
         NSData *out = _buf;
         if (!_converted && _route != nil && _buf.length) {
             _converted = YES;
+            // [BRFILL_V2] 这条入口原本没设 gzip 旗标 —— 会残留上一次请求的值
+            BRSetRespWasGzip(BRIsGzipHeader(_buf));
             NSData *conv = [BRRouter convertResponse:_buf forRoute:_route];
             if (conv != nil) {
                 out = conv;
@@ -562,7 +563,7 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
             // 就地判断是否 gzip（BRIsGzipResponse 在 BRRouter.m 里是 static，这里看不到）
             // [BRZLIB_RUNTIME] 判据 = gzip magic，与 BRZlib 的解压判据完全一致，
             // 避免「头说是 gzip、其实不是」时把好数据弄坏。
-            gBRRespWasGzip = BRIsGzipHeader(brData);
+            BRSetRespWasGzip(BRIsGzipHeader(brData));   // [BRFILL_V2]
             NSData *conv = [BRRouter convertResponse:brData forRoute:brRoute];
             if (conv != nil) {
                 BRINFO(@"[改写] 同步响应 %@：%lu -> %lu 字节",
@@ -703,6 +704,8 @@ static id h_dataTaskReqCH(id self, SEL _cmd, NSURLRequest *req,
                     if (d != nil && kind != nil) {
                         BRRoute *rr = [[BRRoute alloc] init];
                         rr.kind = kind;
+                        // [BRFILL_V2] 这条入口原本也没设 gzip 旗标
+                        BRSetRespWasGzip(BRIsGzipHeader(d));
                         NSData *c = [BRRouter convertResponse:d forRoute:rr];
                         if (c != nil) out = c;
                     }

@@ -33,7 +33,10 @@
 + (NSData *)gunzip:(NSData *)src;
 
 // 由 Tweak.xm 在调用 convertResponse 前设置：原始响应是否 gzip
-extern BOOL gBRRespWasGzip;
+// [BRFILL_V2] gzip 旗标改成类方法，避免每个 hook 入口各自维护一个全局量
+//   （之前只有同步路径会设置它 → 旗标会残留上一次请求的值）
+void  BRSetRespWasGzip(BOOL v);
+BOOL  BRRespWasGzip(void);
 + (NSNumber *)fakeCid:(id)cid forAid:(id)aid;
 // 递归把 protocol-relative 的图片地址补上 http: 前缀
 + (id)fixImages:(id)obj;

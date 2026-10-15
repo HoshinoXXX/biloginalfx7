@@ -36,6 +36,6 @@ BiloginalfX7_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
 BiloginalfX7_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
 
 BiloginalfX7_FRAMEWORKS = Foundation UIKit CoreFoundation Security
-BiloginalfX7_LDFLAGS    = -undefined dynamic_lookup -lz
+BiloginalfX7_LDFLAGS    = -undefined dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk

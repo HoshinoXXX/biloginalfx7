@@ -73,6 +73,14 @@ static BOOL BRConvOff(NSString *kind) {
     return NO;
 }
 
+// [BRFILL_V2] gzip 旗标：集中在这一处定义。
+//   ★ 必须真正有定义：只声明不定义 → 未定义符号 → dyld 解析失败 → dylib 加载后被卸载
+//     （本项目历史上反复踩的坑，见 Makefile 顶部注释）。
+//   之前是 extern 全局量，只有同步路径会写它，别处会残留上一次请求的值。
+static BOOL s_BRRespWasGzip = NO;
+void BRSetRespWasGzip(BOOL v) { s_BRRespWasGzip = v; }
+BOOL BRRespWasGzip(void) { return s_BRRespWasGzip; }
+
 
 
 
@@ -920,7 +928,7 @@ static NSString *BRStripEm(NSString *s) {
     // [BRGUNZIP_IN_CONV] ★ 若是 gzip 压缩体，先解压再处理。
     //   之前几轮「改了数据但界面没变」很可能就是这个原因：
     //   数据换了、Content-Encoding 没换 → App 拿未压缩数据当 gzip 解压 → 失败。
-    BOOL brWasGzip = (gBRRespWasGzip == YES);
+    BOOL brWasGzip = (BRRespWasGzip() == YES);   // [BRFILL_V2]
     if (brWasGzip) {
         body = [BRRouter gunzip:body];
         BRDBG(@"[改写] 已解压 gzip，得到 %lu 字节", (unsigned long)[body length]);
@@ -964,22 +972,27 @@ static NSString *BRStripEm(NSString *s) {
             }
             NSMutableArray *cards = [NSMutableArray arrayWithArray:dataArr];
             NSUInteger filled = 0;
+            if ([cards count] > 0 && [[cards objectAtIndex:0] isKindOfClass:[NSDictionary class]]) {
+                BRINFO(@"[改写] oldhome 卡片键名样本: %@（共 %lu 张卡片）",
+                       [[[cards objectAtIndex:0] allKeys] componentsJoinedByString:@","],
+                       (unsigned long)[cards count]);
+            }
             for (NSUInteger ci = 0; ci < [cards count]; ci++) {
                 id c = [cards objectAtIndex:ci];
                 if (![c isKindOfClass:[NSDictionary class]]) continue;
                 NSMutableDictionary *card = [NSMutableDictionary dictionaryWithDictionary:c];
 
-                // 找出 body 槽位（多种命名都试）
+                // [BRFILL_V2] 槽位字段名（已由 App 自带的 home_init/config 证实是 "body"）
                 NSString *bodyKey = nil;
-                for (NSString *k in @[@"body", @"item", @"items", @"list", @"archives"]) {
+                for (NSString *k in @[@"body", @"items", @"list"]) {
                     id v = [card objectForKey:k];
                     if ([v isKindOfClass:[NSArray class]]) { bodyKey = k; break; }
                 }
                 NSArray *curBody = bodyKey ? [card objectForKey:bodyKey] : nil;
 
-                // rid：param / rid / tid
+                // [BRFILL_V2] rid 来源 = 卡片的 param（config 中 动画区=1 / 音乐区=3 …）
                 NSString *rid = nil;
-                for (NSString *k in @[@"param", @"rid", @"tid", @"tag_id"]) {
+                for (NSString *k in @[@"param", @"rid", @"tid"]) {
                     id v = [card objectForKey:k];
                     if (v != nil) {
                         NSString *s = [NSString stringWithFormat:@"%@", v];
@@ -988,15 +1001,31 @@ static NSString *BRStripEm(NSString *s) {
                 }
                 NSString *ttl = [card objectForKey:@"title"] ?: [card objectForKey:@"name"] ?: @"?";
 
-                if (ci == 0 || [cards count] <= 3) {
-                    BRINFO(@"[改写] oldhome 卡片%lu: title=%@ rid=%@ bodyKey=%@ bodyCount=%lu",
-                           (unsigned long)ci, ttl, rid ?: @"-", bodyKey ?: @"-",
-                           (unsigned long)[curBody count]);
+                // [BRFILL_V2] 判断「这一槽位到底有没有真数据」——
+                //   光看个数是错的：老接口已死，body 常常是 4 个长度非 0 的空壳
+                //   （正好对应界面上的灰框 / 播放量「-」/ 弹幕 0）。
+                NSUInteger usable = 0;
+                for (id e in curBody) {
+                    if (![e isKindOfClass:[NSDictionary class]]) continue;
+                    id t2 = [e objectForKey:@"title"];
+                    id p2 = [e objectForKey:@"param"];
+                    NSString *ts = (t2 && t2 != [NSNull null]) ? [NSString stringWithFormat:@"%@", t2] : @"";
+                    NSString *ps = (p2 && p2 != [NSNull null]) ? [NSString stringWithFormat:@"%@", p2] : @"";
+                    if ([ts length] > 0 && [ps length] > 0 && [ps intValue] > 0) usable++;
                 }
 
-                // body 已有内容 → 不动
-                if ([curBody count] > 0) continue;
-                if (rid == nil) continue;
+                // 每张卡片都记日志（15 张全印），这样一眼能看出真实字段名与槽位状态
+                BRINFO(@"[改写] oldhome 卡片%lu: title=%@ type=%@ rid=%@ bodyKey=%@ count=%lu usable=%lu keys=%@",
+                       (unsigned long)ci, ttl, [card objectForKey:@"type"] ?: @"?",
+                       rid ?: @"-", bodyKey ?: @"-",
+                       (unsigned long)[curBody count], (unsigned long)usable,
+                       [[card allKeys] componentsJoinedByString:@","]);
+
+                if (usable > 0) continue;      // 真有数据 → 保留原样
+                if (rid == nil) {              // 没有 rid 就不是分区卡
+                    BRDBG(@"[改写] oldhome 卡片%lu 跳过（无 rid）", (unsigned long)ci);
+                    continue;
+                }
 
                 // 取新数据填进去
                 NSArray *vs = [BRRouter fetchRegionVideos:rid count:4];
