@@ -192,7 +192,8 @@ static NSData *BRRegionHttpGet(NSString *url) {
                 @"create":       @"",
                 @"description":  @"",
                 @"bvid":         @"",
-                @"uri":          @"",
+                // ★ 必须给原生 scheme！之前空着导致分区视频点不进去
+                @"uri":          [NSString stringWithFormat:@"bilibili://video/%lld", fa],
                 @"pages":        @1,
                 @"track_id":     @""
             };
@@ -1026,11 +1027,30 @@ static NSString *BRStripEm(NSString *s) {
             // ★ 推荐卡不带 param 字段：
             //   带上空 param 可能被 App 当成「可刷新」→ 卡片下面多出一个刷新键
             //   （用户反馈：「推薦那 6 個视頱 下面多了一個刷新鍵」）。
+            // ★★★ App 的推荐卡固定渲染 6 个位置，
+            //   过滤掉广告后不足 6 条会留下空白
+            //   （用户反馈：「灰色的视頱沒了，但那裡變成一處空白」）。
+            //   所以不足 6 条时，从其他分区借视频补齐。
+            NSMutableArray *recBody = [NSMutableArray arrayWithArray:out];
+            if ([recBody count] < 6) {
+                NSArray *padRids = @[@"1", @"3", @"4", @"5", @"36", @"119"];
+                for (NSString *pr in padRids) {
+                    if ([recBody count] >= 6) break;
+                    @try {
+                        NSArray *pv = [BRRouter fetchRegionVideos:pr count:6];
+                        for (id one in pv) {
+                            if ([recBody count] >= 6) break;
+                            [recBody addObject:one];
+                        }
+                    } @catch (NSException *e) { }
+                }
+                BRINFO(@"[改写] 推荐卡补齐至 %lu 条", (unsigned long)[recBody count]);
+            }
             NSDictionary *recCard = @{
                 @"type":  @"recommend",
                 @"style": @"medium",
                 @"title": @"热门焦点",
-                @"body":  out
+                @"body":  recBody
             };
             NSMutableArray *cards = [NSMutableArray array];
             [cards addObject:recCard];
