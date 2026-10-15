@@ -1275,7 +1275,23 @@ static NSString *BRStripEm(NSString *s) {
                     regItems = dd;
                 }
             }
-            if ([regItems isKindOfClass:[NSArray class]]) {
+            // ★★★ 刷新时（pn>=2）不能再包卡片！
+            //   App 点「换一换」时期望拿到普通视频列表来替换卡片内容，
+            //   而我每次都返回一张新卡片 → 界面不更新。
+            //   （日志证据：pn=1..5 都发了请求、数据也是新的，但界面不变）
+            NSString *pnNow = [route.extra objectForKey:@"pn"];
+            BOOL brIsRefresh = (pnNow != nil && [pnNow integerValue] >= 2);
+            if (brIsRefresh && [regItems isKindOfClass:[NSArray class]]) {
+                NSMutableDictionary *plain = [NSMutableDictionary dictionaryWithDictionary:box];
+                [plain setObject:regItems forKey:@"data"];
+                [plain setObject:regItems forKey:@"archives"];
+                [plain setObject:regItems forKey:@"list"];
+                [plain setObject:regItems forKey:@"item"];
+                [plain setObject:regItems forKey:@"items"];
+                box = plain;
+                BRINFO(@"[改写] region 刷新(pn=%@) → 返回普通列表 %lu 条",
+                       pnNow, (unsigned long)[regItems count]);
+            } else if ([regItems isKindOfClass:[NSArray class]]) {
                 NSString *rtitle = route.note ?: @"推荐";
                 // ★ 从改写后的 URL 里取出 rid（各分区卡片是单独请求的）
                 NSString *rid2 = @"";
