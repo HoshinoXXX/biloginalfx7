@@ -27,7 +27,7 @@ include $(THEOS)/makefiles/common.mk
 
 TWEAK_NAME = BiloginalfX7
 
-BiloginalfX7_FILES = BRLogin.m Tweak.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m
+BiloginalfX7_FILES = BRLogin.m Tweak.xm BRLog.m BRStore.m BRSession.m BRRouter.m BRURLProtocol.m BRZlib.m
 
 BiloginalfX7_CFLAGS     = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incompatible-pointer-types -Wno-unused-function -Wno-unused-variable
 BiloginalfX7_CCFLAGS    = $(WARNFLAGS) $(MINVER)

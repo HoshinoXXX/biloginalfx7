@@ -1,4 +1,4 @@
-#import <zlib.h>
+#import "BRZlib.h"
 #import "BRRouter.h"
 #import "BRStore.h"
 #import "BRSession.h"
@@ -110,33 +110,18 @@ static NSString *BRRegionNameForRid(NSString *rid) {
 //   自己先解压、改完再决定是否压缩，并且同步修正 Content-Encoding。
 // ---------------------------------------------------------------------------
 + (NSData *)gunzip:(NSData *)src {
-    if (src == nil || [src length] < 18) return src;
-    // gzip magic: 1f 8b
-    const unsigned char *b = (const unsigned char *)[src bytes];
-    if (!(b[0] == 0x1f && b[1] == 0x8b)) return src;   // 不是 gzip，原样返回
-
-    z_stream zs;
-    memset(&zs, 0, sizeof(zs));
-    // 15+16 = 自动识别 gzip 头
-    if (inflateInit2(&zs, 15 + 16) != Z_OK) return src;
-    zs.next_in  = (Bytef *)[src bytes];
-    zs.avail_in = (uInt)[src length];
-
-    NSMutableData *out = [NSMutableData data];
-    unsigned char buf[16384];
-    int rc = Z_OK;
-    while (rc == Z_OK) {
-        zs.next_out  = buf;
-        zs.avail_out = (uInt)sizeof(buf);
-        rc = inflate(&zs, Z_NO_FLUSH);
-        NSUInteger got = sizeof(buf) - zs.avail_out;
-        if (got > 0) [out appendBytes:buf length:got];
-        if (rc == Z_STREAM_END) break;
-        if (rc != Z_OK && rc != Z_BUF_ERROR) break;
-        if (rc == Z_BUF_ERROR && got == 0) break;
+    if (src == nil || [src length] < 2) return src;
+    // 不是 gzip → 原样返回（保持老语义：不要 NULL 化调用方数据）
+    if (!BRIsGzipHeader(src)) return src;
+    // ★ 交给 BRZlib：zlib 是运行时 dlopen 的，拿不到就用原始数据，
+    //   绝不因为解压不可用而让调用方拿到 nil。
+    NSData *plain = BRGunzipData(src);
+    if (plain == nil) {
+        BRERR(@"[改写] gunzip 失败（zlib 不可用？），返回原始数据 %lu 字节",
+              (unsigned long)[src length]);
+        return src;
     }
-    inflateEnd(&zs);
-    return ([out length] > 0) ? out : src;
+    return plain;
 }
 
 // 从响应头里判断 Content-Encoding

@@ -33,6 +33,8 @@
 #import "BRSession.h"
 #import "BRURLProtocol.h"
 #import "BRRouter.h"
+#import "BRZlib.h"   // [BRZLIB_RUNTIME]
+#import "BRZlib.h"
 
 #pragma mark - 里程碑（完全独立，不依赖任何插件代码）
 
@@ -558,22 +560,9 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
             //   否则我们会拿压缩体当 JSON 解析而失败
             //   （日志里 head=空 就是这个原因）。
             // 就地判断是否 gzip（BRIsGzipResponse 在 BRRouter.m 里是 static，这里看不到）
-            gBRRespWasGzip = NO;
-            @try {
-                if (respOut != NULL && *respOut != nil &&
-                    [*respOut isKindOfClass:[NSHTTPURLResponse class]]) {
-                    NSDictionary *hh = [(NSHTTPURLResponse *)*respOut allHeaderFields];
-                    for (NSString *hk in hh) {
-                        if ([hk caseInsensitiveCompare:@"Content-Encoding"] == NSOrderedSame) {
-                            NSString *hv = [hh objectForKey:hk];
-                            if ([hv rangeOfString:@"gzip" options:NSCaseInsensitiveSearch].location != NSNotFound) {
-                                gBRRespWasGzip = YES;
-                            }
-                            break;
-                        }
-                    }
-                }
-            } @catch (NSException *e) { }
+            // [BRZLIB_RUNTIME] 判据 = gzip magic，与 BRZlib 的解压判据完全一致，
+            // 避免「头说是 gzip、其实不是」时把好数据弄坏。
+            gBRRespWasGzip = BRIsGzipHeader(brData);
             NSData *conv = [BRRouter convertResponse:brData forRoute:brRoute];
             if (conv != nil) {
                 BRINFO(@"[改写] 同步响应 %@：%lu -> %lu 字节",

@@ -23,7 +23,7 @@ jobs:
           for f in Makefile control Tweak.xm BiloginalfX7.plist \
                    BRCrypto.h BRLog.h BRLog.m BRStore.h BRStore.m \
                    BRSession.h BRSession.m BRRouter.h BRRouter.m \
-                   BRURLProtocol.h BRURLProtocol.m; do
+                   BRURLProtocol.h BRURLProtocol.m BRZlib.h BRZlib.m; do
             if [ ! -f "$f" ]; then
               echo "!! 缺少 $f"
               miss=1
