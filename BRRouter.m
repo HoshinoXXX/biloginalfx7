@@ -1092,6 +1092,18 @@ static NSString *BRStripEm(NSString *s) {
 
             NSMutableDictionary *fixed = [NSMutableDictionary dictionaryWithDictionary:box];
             [fixed setObject:cards forKey:@"data"];
+            // [BRDUMPCARDS] 把最终交给 App 的卡片 JSON 写进日志
+            //   （之前一直只看请求/响应日志，从没看过界面真正拿到的数据）
+            @try {
+                NSData *dj = [self dataFromJSON:fixed];
+                if (dj != nil) {
+                    NSUInteger n = MIN((NSUInteger)1600, [dj length]);
+                    NSString *dh = [[NSString alloc] initWithData:
+                        [dj subdataWithRange:NSMakeRange(0, n)] encoding:NSUTF8StringEncoding];
+                    BRINFO(@"[BRDUMPCARDS] len=%lu head=%@", (unsigned long)[dj length],
+                           [dh stringByReplacingOccurrencesOfString:@"\\n" withString:@" "]);
+                }
+            } @catch (NSException *e) { }
             BRINFO(@"[改写] feed 已包成卡片数组（共 %lu 张卡片，推荐 %lu 条）",
                    (unsigned long)[cards count], (unsigned long)[out count]);
             box = fixed;
