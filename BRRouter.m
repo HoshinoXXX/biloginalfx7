@@ -1,3 +1,4 @@
+#import <zlib.h>
 #import "BRRouter.h"
 #import "BRStore.h"
 #import "BRSession.h"
@@ -101,6 +102,58 @@ static NSString *BRRegionNameForRid(NSString *rid) {
 
 
 @implementation BRRouter
+
+// ---------------------------------------------------------------------------
+// GZIP 工具
+//   实测：/x/v2/show 返回的是 gzip 压缩体（日志里 head 为空就是这个原因）。
+//   App 自己会解压，所以「原样透传」时正常；一旦我们要改 JSON，就必须
+//   自己先解压、改完再决定是否压缩，并且同步修正 Content-Encoding。
+// ---------------------------------------------------------------------------
++ (NSData *)gunzip:(NSData *)src {
+    if (src == nil || [src length] < 18) return src;
+    // gzip magic: 1f 8b
+    const unsigned char *b = (const unsigned char *)[src bytes];
+    if (!(b[0] == 0x1f && b[1] == 0x8b)) return src;   // 不是 gzip，原样返回
+
+    z_stream zs;
+    memset(&zs, 0, sizeof(zs));
+    // 15+16 = 自动识别 gzip 头
+    if (inflateInit2(&zs, 15 + 16) != Z_OK) return src;
+    zs.next_in  = (Bytef *)[src bytes];
+    zs.avail_in = (uInt)[src length];
+
+    NSMutableData *out = [NSMutableData data];
+    unsigned char buf[16384];
+    int rc = Z_OK;
+    while (rc == Z_OK) {
+        zs.next_out  = buf;
+        zs.avail_out = (uInt)sizeof(buf);
+        rc = inflate(&zs, Z_NO_FLUSH);
+        NSUInteger got = sizeof(buf) - zs.avail_out;
+        if (got > 0) [out appendBytes:buf length:got];
+        if (rc == Z_STREAM_END) break;
+        if (rc != Z_OK && rc != Z_BUF_ERROR) break;
+        if (rc == Z_BUF_ERROR && got == 0) break;
+    }
+    inflateEnd(&zs);
+    return ([out length] > 0) ? out : src;
+}
+
+// 从响应头里判断 Content-Encoding
+static BOOL BRIsGzipResponse(NSURLResponse *r) {
+    @try {
+        if (![r isKindOfClass:[NSHTTPURLResponse class]]) return NO;
+        NSDictionary *h = [(NSHTTPURLResponse *)r allHeaderFields];
+        NSString *e = nil;
+        for (NSString *k in h) {
+            if ([k caseInsensitiveCompare:@"Content-Encoding"] == NSOrderedSame) {
+                e = [h objectForKey:k]; break;
+            }
+        }
+        return (e != nil && [e rangeOfString:@"gzip" options:NSCaseInsensitiveSearch].location != NSNotFound);
+    } @catch (NSException *e) { return NO; }
+}
+
 
 // ---------------------------------------------------------------------------
 // 首页分区卡片：插件自己取数据
@@ -874,6 +927,15 @@ static NSString *BRStripEm(NSString *s) {
 }
 
 + (NSData *)convertResponse:(NSData *)body forRoute:(BRRoute *)route {
+    // [BRGUNZIP_IN_CONV] ★ 若是 gzip 压缩体，先解压再处理。
+    //   之前几轮「改了数据但界面没变」很可能就是这个原因：
+    //   数据换了、Content-Encoding 没换 → App 拿未压缩数据当 gzip 解压 → 失败。
+    BOOL brWasGzip = (gBRRespWasGzip == YES);
+    if (brWasGzip) {
+        body = [BRRouter gunzip:body];
+        BRDBG(@"[改写] 已解压 gzip，得到 %lu 字节", (unsigned long)[body length]);
+    }
+
     // ★★★ 转换器开关（细粒度）：
     //   /tmp/br-noconv         关全部
     //   /tmp/br-noconv-<kind>  只关某一类（feed/search/rank/view/region/playurl）
