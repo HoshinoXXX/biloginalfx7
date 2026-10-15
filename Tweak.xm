@@ -554,6 +554,26 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
     @try {
         if (brData != nil && brRoute != nil && brRoute.kind != nil) {
             NSUInteger before = [brData length];
+            // ★ 告诉转换器「原始响应是不是 gzip」，
+            //   否则我们会拿压缩体当 JSON 解析而失败
+            //   （日志里 head=空 就是这个原因）。
+            // 就地判断是否 gzip（BRIsGzipResponse 在 BRRouter.m 里是 static，这里看不到）
+            gBRRespWasGzip = NO;
+            @try {
+                if (respOut != NULL && *respOut != nil &&
+                    [*respOut isKindOfClass:[NSHTTPURLResponse class]]) {
+                    NSDictionary *hh = [(NSHTTPURLResponse *)*respOut allHeaderFields];
+                    for (NSString *hk in hh) {
+                        if ([hk caseInsensitiveCompare:@"Content-Encoding"] == NSOrderedSame) {
+                            NSString *hv = [hh objectForKey:hk];
+                            if ([hv rangeOfString:@"gzip" options:NSCaseInsensitiveSearch].location != NSNotFound) {
+                                gBRRespWasGzip = YES;
+                            }
+                            break;
+                        }
+                    }
+                }
+            } @catch (NSException *e) { }
             NSData *conv = [BRRouter convertResponse:brData forRoute:brRoute];
             if (conv != nil) {
                 BRINFO(@"[改写] 同步响应 %@：%lu -> %lu 字节",
@@ -576,6 +596,15 @@ static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
                         [hd setObject:[NSString stringWithFormat:@"%lu", (unsigned long)[conv length]]
                                forKey:@"Content-Length"];
                         [hd setObject:@"application/json" forKey:@"Content-Type"];
+                        // ★★★ 必须删掉 Content-Encoding！
+                        //   我们返回的是未压缩的 JSON，若仍声明 gzip，
+                        //   App 会拿未压缩数据去解压 → 失败 → 界面空白。
+                        for (NSString *hk in [hd allKeys]) {
+                            if ([hk caseInsensitiveCompare:@"Content-Encoding"] == NSOrderedSame) {
+                                [hd removeObjectForKey:hk];
+                                break;
+                            }
+                        }
                         id nr = [[respCls alloc] initWithURL:[o URL]
                                                   statusCode:[o statusCode]
                                                  HTTPVersion:@"HTTP/1.1"
