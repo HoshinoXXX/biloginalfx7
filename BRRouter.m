@@ -1,4 +1,3 @@
-#import <zlib.h>
 #import "BRRouter.h"
 #import "BRStore.h"
 #import "BRSession.h"
@@ -102,58 +101,6 @@ static NSString *BRRegionNameForRid(NSString *rid) {
 
 
 @implementation BRRouter
-
-// ---------------------------------------------------------------------------
-// GZIP 工具
-//   实测：/x/v2/show 返回的是 gzip 压缩体（日志里 head 为空就是这个原因）。
-//   App 自己会解压，所以「原样透传」时正常；一旦我们要改 JSON，就必须
-//   自己先解压、改完再决定是否压缩，并且同步修正 Content-Encoding。
-// ---------------------------------------------------------------------------
-+ (NSData *)gunzip:(NSData *)src {
-    if (src == nil || [src length] < 18) return src;
-    // gzip magic: 1f 8b
-    const unsigned char *b = (const unsigned char *)[src bytes];
-    if (!(b[0] == 0x1f && b[1] == 0x8b)) return src;   // 不是 gzip，原样返回
-
-    z_stream zs;
-    memset(&zs, 0, sizeof(zs));
-    // 15+16 = 自动识别 gzip 头
-    if (inflateInit2(&zs, 15 + 16) != Z_OK) return src;
-    zs.next_in  = (Bytef *)[src bytes];
-    zs.avail_in = (uInt)[src length];
-
-    NSMutableData *out = [NSMutableData data];
-    unsigned char buf[16384];
-    int rc = Z_OK;
-    while (rc == Z_OK) {
-        zs.next_out  = buf;
-        zs.avail_out = (uInt)sizeof(buf);
-        rc = inflate(&zs, Z_NO_FLUSH);
-        NSUInteger got = sizeof(buf) - zs.avail_out;
-        if (got > 0) [out appendBytes:buf length:got];
-        if (rc == Z_STREAM_END) break;
-        if (rc != Z_OK && rc != Z_BUF_ERROR) break;
-        if (rc == Z_BUF_ERROR && got == 0) break;
-    }
-    inflateEnd(&zs);
-    return ([out length] > 0) ? out : src;
-}
-
-// 从响应头里判断 Content-Encoding
-static BOOL BRIsGzipResponse(NSURLResponse *r) {
-    @try {
-        if (![r isKindOfClass:[NSHTTPURLResponse class]]) return NO;
-        NSDictionary *h = [(NSHTTPURLResponse *)r allHeaderFields];
-        NSString *e = nil;
-        for (NSString *k in h) {
-            if ([k caseInsensitiveCompare:@"Content-Encoding"] == NSOrderedSame) {
-                e = [h objectForKey:k]; break;
-            }
-        }
-        return (e != nil && [e rangeOfString:@"gzip" options:NSCaseInsensitiveSearch].location != NSNotFound);
-    } @catch (NSException *e) { return NO; }
-}
-
 
 // ---------------------------------------------------------------------------
 // 首页分区卡片：插件自己取数据
@@ -307,15 +254,10 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
     //   而 /x/v2/region 已实测「原样透传」能拿到正确的老格式，
     //   所以首页也先试原接口，让 App 用它自己的排版。
     //   想回到新 feed 对比时：touch /tmp/br-newhome
-    // [BROLDHOME] 首页走原接口，但我们要把分区卡片的空 body 填上。
     if ([path isEqualToString:@"/x/v2/show"] &&
         ![[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-newhome"]) {
-        BRRoute *oh = [[BRRoute alloc] init];
-        oh.kind = @"oldhome";
-        oh.note = @"首页(原接口+填充分区)";
-        oh.url = nil;                 // 不改写上游
-        BRINFO(@"[改写] /x/v2/show → oldhome（原版排版 + 填充分区卡片）");
-        return oh;
+        BRINFO(@"[改写] /x/v2/show 走原接口（原版排版+框架，仅做 ID 虚拟化）");
+        return nil;
     }
     if ([path isEqualToString:@"/x/v2/feed/index"] ||
         [path isEqualToString:@"/x/web-interface/index/top/rcmd"] ||
@@ -932,15 +874,6 @@ static NSString *BRStripEm(NSString *s) {
 }
 
 + (NSData *)convertResponse:(NSData *)body forRoute:(BRRoute *)route {
-    // [BRGUNZIP_IN_CONV] ★ 若是 gzip 压缩体，先解压再处理。
-    //   之前几轮「改了数据但界面没变」很可能就是这个原因：
-    //   数据换了、Content-Encoding 没换 → App 拿未压缩数据当 gzip 解压 → 失败。
-    BOOL brWasGzip = (gBRRespWasGzip == YES);
-    if (brWasGzip) {
-        body = [BRRouter gunzip:body];
-        BRDBG(@"[改写] 已解压 gzip，得到 %lu 字节", (unsigned long)[body length]);
-    }
-
     // ★★★ 转换器开关（细粒度）：
     //   /tmp/br-noconv         关全部
     //   /tmp/br-noconv-<kind>  只关某一类（feed/search/rank/view/region/playurl）
@@ -961,81 +894,6 @@ static NSString *BRStripEm(NSString *s) {
             NSData *vd = [self dataFromJSON:v];
             if (vd != nil) body = vd;
         }
-    }
-
-    // [BROLDHOME] 首页：填充各分区卡片的空 body
-    if ([route.kind isEqualToString:@"oldhome"]) {
-        @try {
-            NSDictionary *oh = [self jsonFromData:body];
-            if (oh == nil) {
-                BRINFO(@"[改写] oldhome 响应不是 JSON（%lu 字节，可能仍是压缩体）",
-                       (unsigned long)[body length]);
-                return body;
-            }
-            id dataArr = [oh objectForKey:@"data"];
-            if (![dataArr isKindOfClass:[NSArray class]]) {
-                BRINFO(@"[改写] oldhome data 不是数组，跳过");
-                return body;
-            }
-            NSMutableArray *cards = [NSMutableArray arrayWithArray:dataArr];
-            NSUInteger filled = 0;
-            for (NSUInteger ci = 0; ci < [cards count]; ci++) {
-                id c = [cards objectAtIndex:ci];
-                if (![c isKindOfClass:[NSDictionary class]]) continue;
-                NSMutableDictionary *card = [NSMutableDictionary dictionaryWithDictionary:c];
-
-                // 找出 body 槽位（多种命名都试）
-                NSString *bodyKey = nil;
-                for (NSString *k in @[@"body", @"item", @"items", @"list", @"archives"]) {
-                    id v = [card objectForKey:k];
-                    if ([v isKindOfClass:[NSArray class]]) { bodyKey = k; break; }
-                }
-                NSArray *curBody = bodyKey ? [card objectForKey:bodyKey] : nil;
-
-                // rid：param / rid / tid
-                NSString *rid = nil;
-                for (NSString *k in @[@"param", @"rid", @"tid", @"tag_id"]) {
-                    id v = [card objectForKey:k];
-                    if (v != nil) {
-                        NSString *s = [NSString stringWithFormat:@"%@", v];
-                        if ([s length] && [s intValue] > 0) { rid = s; break; }
-                    }
-                }
-                NSString *ttl = [card objectForKey:@"title"] ?: [card objectForKey:@"name"] ?: @"?";
-
-                if (ci == 0 || [cards count] <= 3) {
-                    BRINFO(@"[改写] oldhome 卡片%lu: title=%@ rid=%@ bodyKey=%@ bodyCount=%lu",
-                           (unsigned long)ci, ttl, rid ?: @"-", bodyKey ?: @"-",
-                           (unsigned long)[curBody count]);
-                }
-
-                // body 已有内容 → 不动
-                if ([curBody count] > 0) continue;
-                if (rid == nil) continue;
-
-                // 取新数据填进去
-                NSArray *vs = [BRRouter fetchRegionVideos:rid count:4];
-                if ([vs count] > 0) {
-                    NSString *bk = bodyKey ?: @"body";
-                    [card setObject:vs forKey:bk];
-                    [cards replaceObjectAtIndex:ci withObject:card];
-                    filled++;
-                    BRINFO(@"[改写] oldhome 已填 %@（rid=%@）%lu 条", ttl, rid,
-                           (unsigned long)[vs count]);
-                }
-            }
-            NSMutableDictionary *out = [NSMutableDictionary dictionaryWithDictionary:oh];
-            [out setObject:cards forKey:@"data"];
-            NSData *nd = [self dataFromJSON:out];
-            if (nd != nil) {
-                BRINFO(@"[改写] oldhome 填充完成：%lu 张卡片 / 填入 %lu 张",
-                       (unsigned long)[cards count], (unsigned long)filled);
-                return nd;
-            }
-        } @catch (NSException *e) {
-            BRERR(@"[改写] oldhome 失败: %@", [e description]);
-        }
-        return body;
     }
 
     NSString *kind = route.kind;
