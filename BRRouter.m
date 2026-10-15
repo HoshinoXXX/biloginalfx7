@@ -934,6 +934,29 @@ static NSString *BRStripEm(NSString *s) {
             NSDictionary *stat = [it objectForKey:@"stat"];
             if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
 
+            // ★★★ 过滤广告与占位卡片。
+            //   新版 feed 会混入广告条目（goto 不是 av、或带 ad_info、或 is_ad），
+            //   原样传过去 App 会渲染成灰色占位
+            //   （用户反馈：「推薦的 6 個視頻有時候會有幾個灰色的東西」）。
+            {
+                NSString *g = [it objectForKey:@"goto"];
+                if ([g isKindOfClass:[NSString class]] && [g length] > 0 &&
+                    ![g isEqualToString:@"av"] && ![g isEqualToString:@"video"]) {
+                    BRDBG(@"[改写] feed 跳过非视频条目 goto=%@", g);
+                    continue;
+                }
+                if ([it objectForKey:@"ad_info"] != nil) {
+                    BRDBG(@"[改写] feed 跳过广告条目(ad_info)");
+                    continue;
+                }
+                id isAd = [it objectForKey:@"is_ad"];
+                if (isAd != nil && [isAd respondsToSelector:@selector(boolValue)] &&
+                    [isAd boolValue]) {
+                    BRDBG(@"[改写] feed 跳过广告条目(is_ad)");
+                    continue;
+                }
+            }
+
             // ★ 新版把 aid 放在 id 字段，不是 aid
             id aidRaw = [it objectForKey:@"id"];
             if (aidRaw == nil) aidRaw = [it objectForKey:@"aid"];
@@ -946,9 +969,14 @@ static NSString *BRStripEm(NSString *s) {
             NSString *pic  = BRPicFix([it objectForKey:@"pic"] ?: [it objectForKey:@"pic_4_3"] ?: @"");
             NSString *face = BRPicFix([owner objectForKey:@"face"] ?: @"");
             id dm = [stat objectForKey:@"danmaku"];
-            NSString *uri = [it objectForKey:@"uri"];
-            if (uri == nil && fakeAid != nil)
+            // ★★★ uri 必须用 App 原生 scheme，绝不能用上游给的网页地址！
+            //   上游 URI 形如 https://www.bilibili.com/video/BVxxx ——
+            //   带上它 App 会去开「新版网页播放器」，而不是客户端的
+            //   简介/评论/播放页（用户反馈：「點進去是新版的網頁播放器」）。
+            NSString *uri = nil;
+            if (fakeAid != nil)
                 uri = [NSString stringWithFormat:@"bilibili://video/%@", fakeAid];
+            if (uri == nil) uri = @"";
 
             [out addObject:@{
                 @"goto":        [it objectForKey:@"goto"] ?: @"av",
