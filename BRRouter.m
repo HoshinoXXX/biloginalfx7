@@ -995,11 +995,13 @@ static NSString *BRStripEm(NSString *s) {
         //     ]}
         //   之前直接输出扁平视频数组 → App 在 data[0] 里找不到 type/body → 整页空白。
         {
+            // ★ 推荐卡不带 param 字段：
+            //   带上空 param 可能被 App 当成「可刷新」→ 卡片下面多出一个刷新键
+            //   （用户反馈：「推薦那 6 個视頱 下面多了一個刷新鍵」）。
             NSDictionary *recCard = @{
                 @"type":  @"recommend",
                 @"style": @"medium",
                 @"title": @"热门焦点",
-                @"param": @"",
                 @"body":  out
             };
             NSMutableArray *cards = [NSMutableArray array];
