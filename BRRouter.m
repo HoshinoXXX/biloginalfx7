@@ -117,7 +117,7 @@ static NSData *BRRegionHttpGet(NSString *url) {
         NSURL *u = [NSURL URLWithString:url];
         if (u == nil) return nil;
         id rq = [reqCls requestWithURL:u];
-        [rq setTimeoutInterval:8];
+        [rq setTimeoutInterval:3];   // ★ 8s 太久，会把首页请求卡死
         [rq setValue:@"Mozilla/5.0 BiliDroid/2.0.1 (bbcallen@gmail.com) os/android"
    forHTTPHeaderField:@"User-Agent"];
         return [connCls sendSynchronousRequest:rq returningResponse:NULL error:NULL];
@@ -126,8 +126,29 @@ static NSData *BRRegionHttpGet(NSString *url) {
 
 // 取某分区的若干条视频，并转成老客户端能吃的条目
 + (NSArray *)fetchRegionVideos:(NSString *)rid count:(NSUInteger)want {
+
+// ★ 分区结果缓存：同一个分区 120 秒内不重复取数。
+//   否则每次首页刷新都要重做几个同步请求，把首页卡死。
+static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v":数组}
     NSMutableArray *out = [NSMutableArray array];
     @try {
+        // ★ 先查缓存
+        @try {
+            if (gBRRegionCache == nil) gBRRegionCache = [[NSMutableDictionary alloc] init];
+            NSDictionary *c = [gBRRegionCache objectForKey:rid];
+            if (c != nil) {
+                NSTimeInterval age = [[NSDate date] timeIntervalSince1970] -
+                                     [[c objectForKey:@"t"] doubleValue];
+                if (age < 120.0) {
+                    NSArray *v = [c objectForKey:@"v"];
+                    if ([v isKindOfClass:[NSArray class]] && [v count] > 0) {
+                        BRDBG(@"[改写] 分区 %@ 命中缓存 %lu 条", rid, (unsigned long)[v count]);
+                        return v;
+                    }
+                }
+            }
+        } @catch (NSException *e) { }
+
         // ★ 一级分区用经典 newlist（自检实测返回 archives[] 正常）。
         //   注意：UWP 的 dynamic/child 是【二级】分区用的，层级不同，别混用。
         NSString *url = [NSString stringWithFormat:
@@ -167,7 +188,15 @@ static NSData *BRRegionHttpGet(NSString *url) {
             }
         }
         BRDBG(@"[改写] 分区 %@ 复用 feed 流水线得到 %lu 条", rid, (unsigned long)[out count]);
-    } @catch (NSException *e) {
+
+        // ★ 写缓存
+        @try {
+            if ([out count] > 0) {
+                if (gBRRegionCache == nil) gBRRegionCache = [[NSMutableDictionary alloc] init];
+                [gBRRegionCache setObject:@{@"t": @([[NSDate date] timeIntervalSince1970]),
+                                            @"v": out} forKey:rid];
+            }
+        } @catch (NSException *e) { }    } @catch (NSException *e) {
         BRERR(@"[改写] 取分区 %@ 失败: %@", rid, [e description]);
     }
     return out;
@@ -1036,7 +1065,10 @@ static NSString *BRStripEm(NSString *s) {
             BOOL brNoPart = [[route.extra objectForKey:@"nopartition"] boolValue];
             NSArray *rids = brNoPart
                           ? (NSArray *)@[]
-                          : (NSArray *)@[@"1", @"13", @"3", @"4", @"36", @"5", @"119", @"160"];
+                          // ★ 只取 3 个分区：每个同步请求约 4 秒，
+                          //   8 个会把首页卡 30 秒以上 → App 被看门狗杀掉
+                          //   （用户截图：一直停在「正在玩命加载数据」）。
+                          : (NSArray *)@[@"1", @"4", @"36"];
             for (NSString *r in rids) {
                 @try {
                     NSArray *vs = [BRRouter fetchRegionVideos:r count:4];
