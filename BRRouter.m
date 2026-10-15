@@ -722,17 +722,19 @@ static NSData *BRRegionHttpGet(NSString *url) {
         return r;
     }
 
-    // ★ 一级分区：改用 UWP 客户端的专用通道 dynamic/child
-    //   （接口与参数取自 UWP 3.5.0 的 Bibi.dll；newlist 现已泛化 ——
-    //    rid=3 只返回无关的通用推荐，而本接口返回的确实是该分区的内容）
-    long long ts = (long long)[[NSDate date] timeIntervalSince1970];
+    // ★ 一级分区：用经典 newlist，并且**必须带上 pn/ps**！
+    //   之前转去 UWP 的 dynamic/child，那个接口不支持分页（永远返回第一页），
+    //   于是分区卡片上的「换一换」刷新键点了没反应
+    //   （用户反馈：「分區那裏的單獨刷新鍵點了不刷新」）。
+    //   注意层级：UWP dynamic/child 是【二级】分区用的，一级分区用 newlist。
     r.url = [NSString stringWithFormat:
-        @"https://app.bilibili.com/x/v2/region/dynamic/child"
-        @"?build=6180000&channel=bilih5&mobi_app=win&platform=win"
-        @"&rid=%@&tag_id=0&ts=%lld", rid, ts];
+        @"https://api.bilibili.com/x/web-interface/newlist"
+        @"?rid=%@&pn=%@&ps=%@&order=0&build=4070&mobi_app=iphone"
+        @"&platform=ios&device=phone&appkey=27eb53fc9058f8c3",
+        rid, pn, ps];
     r.kind = @"region";
-    r.extra = @{@"uwp": @YES, @"pn": pn, @"rid": rid};
-    r.note = [NSString stringWithFormat:@"一级分区(UWP rid=%@)", rid];
+    r.extra = @{@"pn": pn, @"ps": ps, @"rid": rid};
+    r.note = [NSString stringWithFormat:@"一级分区(newlist rid=%@ pn=%@)", rid, pn];
     return r;
 }
 
