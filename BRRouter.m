@@ -964,7 +964,7 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // [BROLDHOME] 首页：填充各分区卡片的空 body
-    if ([kind isEqualToString:@"oldhome"]) {
+    if ([route.kind isEqualToString:@"oldhome"]) {
         @try {
             NSDictionary *oh = [self jsonFromData:body];
             if (oh == nil) {
