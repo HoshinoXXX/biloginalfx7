@@ -168,6 +168,9 @@ static NSData *BRRegionHttpGet(NSString *url) {
             // ★ 新版 App 优先用 bvid 打开视频，
             //   之前我把 bvid 填成空串 → 分区视频点不进去
             //   （用户反馈：「只有推荐的可以」）。
+            // ★ newlist 把播放量/弹幕放在 stat 子字典里
+            NSDictionary *stat = [it objectForKey:@"stat"];
+            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
             NSString *bvid = [it objectForKey:@"bvid"] ?: @"";
             if (![bvid length]) bvid = [it objectForKey:@"bv_id"] ?: @"";
             id cover = [it objectForKey:@"cover"] ?: [it objectForKey:@"pic"] ?: @"";
