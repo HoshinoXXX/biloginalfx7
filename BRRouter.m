@@ -102,10 +102,6 @@ static NSString *BRRegionNameForRid(NSString *rid) {
 
 @implementation BRRouter
 
-// ★ 防递归：fetchRegionVideos 内部会调用 feed 转换器，
-//   而 feed 转换器又会去补分区卡片 —— 用这个标志打断循环。
-static BOOL gBRInRegionFetch = NO;
-
 // ---------------------------------------------------------------------------
 // 首页分区卡片：插件自己取数据
 //   App 期望首页一次返回所有卡片（推荐 + 各分区），而现代接口只给视频列表，
@@ -150,12 +146,11 @@ static NSData *BRRegionHttpGet(NSString *url) {
         tmp.kind = @"feed";
         tmp.note = @"分区(复用feed流水线)";
         NSData *conv = nil;
-        @try {
-            gBRInRegionFetch = YES;
-            conv = [BRRouter convertResponse:d forRoute:tmp];
-        } @finally {
-            gBRInRegionFetch = NO;
-        }
+        // ★ 防递归用 route 上的标记（而不是全局变量）：
+        //   convertResponse:forRoute: 本来就接收 route，天然按调用隔离，
+        //   嵌套调用不会互相干扰 —— 这修掉了上一版的栈溢出崩溃。
+        tmp.extra = @{@"nopartition": @YES};
+        conv = [BRRouter convertResponse:d forRoute:tmp];
         if (conv == nil) conv = d;
         NSDictionary *cj = [BRRouter jsonFromData:conv];
         NSArray *cards = [cj objectForKey:@"data"];
@@ -1036,9 +1031,10 @@ static NSString *BRStripEm(NSString *s) {
             //   因为 App 期望首页一次返回所有卡片（推荐 + 各分区），
             //   而现代接口只给视频列表，所以由插件自己补齐。
             // ★ 一级分区（首页分区卡片用这些）
-            // ★ 防递归：分区取数时正在复用 feed 流水线，这里必须跳过，
-            //   否则 fetchRegionVideos → feed 转换器 → fetchRegionVideos → … 无限递归。
-            NSArray *rids = gBRInRegionFetch
+            // ★ 防递归：若本 route 标了 nopartition（分区取数复用 feed 流水线时会标），
+            //   就跳过补分区卡片，否则会无限递归。
+            BOOL brNoPart = [[route.extra objectForKey:@"nopartition"] boolValue];
+            NSArray *rids = brNoPart
                           ? (NSArray *)@[]
                           : (NSArray *)@[@"1", @"13", @"3", @"4", @"36", @"5", @"119", @"160"];
             for (NSString *r in rids) {
