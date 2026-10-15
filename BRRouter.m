@@ -102,6 +102,10 @@ static NSString *BRRegionNameForRid(NSString *rid) {
 
 @implementation BRRouter
 
+// ★ 防递归：fetchRegionVideos 内部会调用 feed 转换器，
+//   而 feed 转换器又会去补分区卡片 —— 用这个标志打断循环。
+static BOOL gBRInRegionFetch = NO;
+
 // ---------------------------------------------------------------------------
 // 首页分区卡片：插件自己取数据
 //   App 期望首页一次返回所有卡片（推荐 + 各分区），而现代接口只给视频列表，
@@ -138,82 +142,36 @@ static NSData *BRRegionHttpGet(NSString *url) {
             (long long)[[NSDate date] timeIntervalSince1970]];
         NSData *d = BRRegionHttpGet(url);
         if (d == nil || [d length] < 20) return out;
-        id j = [NSJSONSerialization JSONObjectWithData:d options:0 error:NULL];
-        if (![j isKindOfClass:[NSDictionary class]]) return out;
-        id data = [j objectForKey:@"data"];
-        if (![data isKindOfClass:[NSDictionary class]]) return out;
-        // newlist 返回 data.archives[]；也兼容 UWP 的 data.new[]
-        id arr = [data objectForKey:@"archives"];
-        if (![arr isKindOfClass:[NSArray class]]) arr = [data objectForKey:@"new"];
-        if (![arr isKindOfClass:[NSArray class]]) arr = [data objectForKey:@"item"];
-        if (![arr isKindOfClass:[NSArray class]]) return out;
-
-        for (id it in arr) {
-            if ([out count] >= want) break;
-            if (![it isKindOfClass:[NSDictionary class]]) continue;
-            id aidRaw = [it objectForKey:@"aid"] ?: [it objectForKey:@"param"];
-            id cidRaw = [it objectForKey:@"cid"];
-            if (cidRaw == nil) cidRaw = [it objectForKey:@"cid_str"];
-            if (aidRaw == nil) continue;
-            // ★ 注意：BRStore 这两个方法返回的是 long long，不是 NSNumber*
-            long long fa = [BRStore fakeAidForReal:[aidRaw longLongValue]];
-            long long fc = 0;
-            if (cidRaw != nil) {
-                long long f = [BRStore fakeCidForReal:[cidRaw longLongValue]];
-                if (f > 0) {
-                    fc = f;
-                    [BRStore rememberCid:f forAid:fa];
+        // ★★★ 统一框架：不再手写一遍字段映射，
+        //   而是把 newlist 的原始响应**直接交给 feed 转换器**处理，
+        //   于是 aid/cid 虚拟化、stat 取值、uri 构造全部走同一份代码
+        //   （用户建议：「不能用一個框架嗎，變量用不同的」）。
+        BRRoute *tmp = [[BRRoute alloc] init];
+        tmp.kind = @"feed";
+        tmp.note = @"分区(复用feed流水线)";
+        NSData *conv = nil;
+        @try {
+            gBRInRegionFetch = YES;
+            conv = [BRRouter convertResponse:d forRoute:tmp];
+        } @finally {
+            gBRInRegionFetch = NO;
+        }
+        if (conv == nil) conv = d;
+        NSDictionary *cj = [BRRouter jsonFromData:conv];
+        NSArray *cards = [cj objectForKey:@"data"];
+        if ([cards isKindOfClass:[NSArray class]] && [cards count] > 0) {
+            id first = [cards objectAtIndex:0];
+            if ([first isKindOfClass:[NSDictionary class]]) {
+                id body = [first objectForKey:@"body"];
+                if ([body isKindOfClass:[NSArray class]]) {
+                    for (id one in body) {
+                        if ([out count] >= want) break;
+                        [out addObject:one];
+                    }
                 }
             }
-            // ★ 新版 App 优先用 bvid 打开视频，
-            //   之前我把 bvid 填成空串 → 分区视频点不进去
-            //   （用户反馈：「只有推荐的可以」）。
-            // ★ newlist 把播放量/弹幕放在 stat 子字典里
-            NSDictionary *stat = [it objectForKey:@"stat"];
-            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
-            NSString *bvid = [it objectForKey:@"bvid"] ?: @"";
-            if (![bvid length]) bvid = [it objectForKey:@"bv_id"] ?: @"";
-            id cover = [it objectForKey:@"cover"] ?: [it objectForKey:@"pic"] ?: @"";
-            id name  = [it objectForKey:@"name"] ?: [it objectForKey:@"author"] ?: @"";
-            NSString *ttl = [it objectForKey:@"title"] ?: @"";
-            long long dur = [[it objectForKey:@"duration"] longLongValue];
-            NSDictionary *one = @{
-                @"title":        ttl,
-                @"author":       name,
-                @"mid":          [it objectForKey:@"mid"] ?: @0,
-                @"face":         [it objectForKey:@"face"] ?: @"",
-                @"cover":        cover,
-                @"pic":          cover,
-                @"param":        [NSString stringWithFormat:@"%lld", fa],
-                @"aid":          @(fa),
-                @"id":           @(fa),
-                @"cid":          @(fc),
-                @"goto":         @"av",
-                @"card_goto":    @"av",
-                @"card_type":    @"small_cover_v2",
-                // ★ newlist 把播放量/弹幕放在 stat 子字典里
-                //   （stat.view / stat.danmaku），之前取顶层导致全是 0
-                //   （用户反馈：「分区视频預览不顯示播放量和彈幕」）。
-                @"play":         [stat objectForKey:@"view"] ?: [it objectForKey:@"play"] ?: @0,
-                @"danmaku":      [stat objectForKey:@"danmaku"] ?: [it objectForKey:@"danmaku"] ?: @0,
-                @"video_review": [stat objectForKey:@"danmaku"] ?: @0,
-                @"favorites":    [stat objectForKey:@"favorite"] ?: [it objectForKey:@"favourite"] ?: @0,
-                @"review":       [stat objectForKey:@"reply"] ?: [it objectForKey:@"reply"] ?: @0,
-                @"duration":     BRFmtDuration(@(dur)),
-                @"pubdate":      [it objectForKey:@"pubdate"] ?: @0,
-                @"create":       @"",
-                @"description":  @"",
-                // ★★★ bvid 必须留空！
-                //   aid 已虚拟化（能映射回真值），而 bvid 是真值。
-                //   两者并存时 App 优先用 bvid 打开 → 响应里带回真实 15 位 aid
-                //   → 进 App 的 int32 字段溢出成垃圾 → 后续 playurl/reply 全失败。
-                @"bvid":         @"",
-                @"uri":          [NSString stringWithFormat:@"bilibili://video/%lld", fa],
-                @"pages":        @1,
-                @"track_id":     @""
-            };
-            [out addObject:one];
         }
+        BRDBG(@"[改写] 分区 %@ 复用 feed 流水线得到 %lu 条", rid, (unsigned long)[out count]);
     } @catch (NSException *e) {
         BRERR(@"[改写] 取分区 %@ 失败: %@", rid, [e description]);
     }
@@ -1078,7 +1036,11 @@ static NSString *BRStripEm(NSString *s) {
             //   因为 App 期望首页一次返回所有卡片（推荐 + 各分区），
             //   而现代接口只给视频列表，所以由插件自己补齐。
             // ★ 一级分区（首页分区卡片用这些）
-            NSArray *rids = @[@"1", @"13", @"3", @"4", @"36", @"5", @"119", @"160"];
+            // ★ 防递归：分区取数时正在复用 feed 流水线，这里必须跳过，
+            //   否则 fetchRegionVideos → feed 转换器 → fetchRegionVideos → … 无限递归。
+            NSArray *rids = gBRInRegionFetch
+                          ? (NSArray *)@[]
+                          : (NSArray *)@[@"1", @"13", @"3", @"4", @"36", @"5", @"119", @"160"];
             for (NSString *r in rids) {
                 @try {
                     NSArray *vs = [BRRouter fetchRegionVideos:r count:4];
