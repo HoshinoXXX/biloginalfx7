@@ -35,8 +35,16 @@
 // 由 Tweak.xm 在调用 convertResponse 前设置：原始响应是否 gzip
 // [BRFILL_V2] gzip 旗标改成类方法，避免每个 hook 入口各自维护一个全局量
 //   （之前只有同步路径会设置它 → 旗标会残留上一次请求的值）
+// ★ 纯 C 函数，被 Tweak.xm（Objective-C++）引用 → 必须 extern "C"，
+//   否则 C++ 名字修饰会与 BRRouter.m（纯 ObjC）导出的名字不一致 → dyld 崩溃。
+#ifdef __cplusplus
+extern "C" {
+#endif
 void  BRSetRespWasGzip(BOOL v);
 BOOL  BRRespWasGzip(void);
+#ifdef __cplusplus
+}
+#endif
 + (NSNumber *)fakeCid:(id)cid forAid:(id)aid;
 // 递归把 protocol-relative 的图片地址补上 http: 前缀
 + (id)fixImages:(id)obj;
