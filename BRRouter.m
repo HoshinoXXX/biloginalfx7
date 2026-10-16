@@ -845,10 +845,16 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
             }
         }
 
-        // ---------- ③ popular 兜底（分区已废弃） ----------
+        // ---------- ③ popular 兜底 / 補足 ----------
         //   [BRPERF] 结果在分区之间共享缓存 120 秒：
         //   多个失效分区不会各发一次 popular。
-        if ([out count] == 0) {
+        // [BRPOPULAR_TOPUP] ★ 原本是 `if ([out count] == 0)` —— 只有「完全 0 條」才兜底。
+        //   但 PGC 類分區（紀錄片 177 / 電影 23 / 電視劇 11）的 ranking/region
+        //   只回 1~2 條 → out.count = 1 或 2 → **兜底不執行** →
+        //   卡片只有 1~2 個項目，而且 App 似乎會因此把「刷新鍵」藏起來
+        //   （使用者回報：「内容不滿 4 個并且刷新鍵沒了」）。
+        //   改成「不足 want 就補」，讓卡片一定填滿。
+        if ([out count] < want) {
             @try {
                 NSArray *pop = nil;
                 @try {
@@ -1771,8 +1777,14 @@ static NSString *BRStripEm(NSString *s) {
                 @"totalCount": @(n), @"total_count": @(n),
                 @"totalPage": @1, @"total_page": @1,
             };
+            // [BRDATAARRAY] ★ App 明確在要「陣列」——
+            //   真機日誌顯示它印的是 `[self.response arrayValue] return nil`，
+            //   而我們把 data 給成字典（inner）。所以 data 改放項目陣列；
+            //   原本的字典（count/page/totalCount…）改放 result 保留。
             NSDictionary *o = @{ @"code": @0, @"message": @"ok",
-                                 @"data": inner, @"result": inner,
+                                 @"data": rooms, @"result": inner,
+                                 @"count": @(n), @"page": @1,
+                                 @"totalCount": @(n), @"totalPage": @1,
                                  @"livelist": rooms, @"list": rooms };
             NSData *nd = [self dataFromJSON:[self fixImages:o]];
             if (nd != nil) return nd;
@@ -2781,9 +2793,11 @@ static NSString *BRStripEm(NSString *s) {
         }
         if (totalPage <= 0) totalPage = 1;
         // ★ 顶层 list + page（不要嵌在 data.items.video 里）
+        // [BRDATAARRAY] 同上：data 必須是陣列（App 用 arrayValue 取值）。
         NSDictionary *box = @{@"code": @0, @"message": @"0",
                               @"list": videos, @"page": @(totalPage),
-                              @"data": @{@"list": videos, @"page": @(totalPage)}};
+                              @"data": videos,
+                              @"result": @{@"list": videos, @"page": @(totalPage)}};
         BRINFO(@"[改写] search 输出 %lu 条 / %lld 页", (unsigned long)[videos count], totalPage);
         return [self dataFromJSON:box];
     }
