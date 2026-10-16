@@ -24,6 +24,11 @@ NSData  *BRDirectGet(NSString *urlStr, NSInteger *statusOut);
 // 改造登录页：输入框改名、注册按钮改成「发送验证码」
 void BRRelabelLoginPage(id vc);
 
+// [BRLOGINBOX] 插件自己的短信登录面板（完全不碰 App 界面）。
+//   由 Tweak.xm 在網路層偵測到登入意圖時呼叫（App 请求 /api/oauth2/getKey）。
+//   可用 /tmp/br-loginbox-off 关闭。
+void BRLoginShowPanel(void);
+
 #ifdef __cplusplus
 }
 #endif

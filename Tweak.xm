@@ -264,6 +264,24 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
         //   所以这类请求不动它。
         if ([low rangeOfString:@"oauth2/"].location != NSNotFound) {
             BRINFO(@"[登录] oauth2 请求原样透传: %@", path);
+            // [BRLOGINBOX] 老密碼登入介面已關停，App 取不到 RSA 公鑰 →
+            //   使用者只會看到「網絡錯誤」。所以我們在網路層偵測到這個意圖時，
+            //   改彈出插件自己的簡訊登入面板（完全不碰 App 界面）。
+            //   ① 只認 getKey / oauth2/login，避免其他請求誤觸
+            //   ② 啟動後 5 秒內不彈（App 可能在啟動時預取公鑰）
+            //   ③ /tmp/br-loginbox-off 可完全關閉
+            if ([low rangeOfString:@"getkey"].location != NSNotFound ||
+                [low rangeOfString:@"oauth2/login"].location != NSNotFound) {
+                static NSTimeInterval sBRLoadTime = 0;
+                if (sBRLoadTime == 0) sBRLoadTime = [[NSDate date] timeIntervalSince1970];
+                NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+                if (now - sBRLoadTime > 5.0) {
+                    BRINFO(@"[登录] 侦测到登录意图，弹出短信登录面板");
+                    BRLoginShowPanel();
+                } else {
+                    BRDBG(@"[登录] 登录意图出现在启动 5 秒内，忽略（避免突兀弹窗）");
+                }
+            }
             return nil;
         }
         BOOL isSmsSend  = ([low rangeOfString:@"/sms/send"].location != NSNotFound);

@@ -205,6 +205,182 @@ NSData *BRDirectGet(NSString *urlStr, NSInteger *statusOut) {
 
 @end
 
+#pragma mark - [BRLOGINBOX] 插件自己的簡訊登入面板
+
+// 設計說明（2026-10-16）：
+//   交接文件的結論是「不要 hook 這個 App 的 VC 生命週期」（試過 6 種 hook 全部閃退），
+//   建議插件自己彈原生輸入框。這裡用 iOS 原生的 UIAlertView 做**兩步流程**：
+//     步驟 A：輸入手機號 → 「發送驗證碼」
+//     步驟 B：輸入驗證碼 → 「登入」
+//   為什麼分兩步而不用「登入+密碼」雙輸入框：UIAlertView 按任一顆按鈕都會關閉，
+//   分兩步才能「先發碼、再填碼」而不必重開面板。
+//   完全不碰 App 的任何界面元件 → 沒有 VC hook 的風險。
+//   登入成功後 Cookie 由 BRLogin 落庫，App 重啟即為已登入。
+@interface BRLoginPanel : NSObject <UIAlertViewDelegate>
+@property (nonatomic, strong) UIAlertView *phoneAlert;
+@property (nonatomic, strong) UIAlertView *codeAlert;
+@property (nonatomic, copy)   NSString   *phone;
++ (instancetype)shared;
+- (void)beginFromNetworkSignal;
+@end
+
+@implementation BRLoginPanel
+
++ (instancetype)shared {
+    static BRLoginPanel *s = nil;
+    static dispatch_once_t once;
+    dispatch_once(&once, ^{ s = [[BRLoginPanel alloc] init]; });
+    return s;
+}
+
+// 從網路層呼叫（可能是任意執行緒）→ 一律轉到主執行緒彈框
+- (void)beginFromNetworkSignal {
+    @try {
+        if (self.phoneAlert != nil || self.codeAlert != nil) return;   // 已經在彈
+        [self performSelectorOnMainThread:@selector(showPhoneAlert)
+                               withObject:nil waitUntilDone:NO];
+    } @catch (NSException *e) { }
+}
+
+- (void)showPhoneAlert {
+    @try {
+        Class alertCls = NSClassFromString(@"UIAlertView");
+        if (alertCls == Nil) { BRERR(@"[登录] 取不到 UIAlertView"); return; }
+        // 重新檢查（主執行緒上）
+        if (self.phoneAlert != nil || self.codeAlert != nil) return;
+        id a = [[alertCls alloc] initWithTitle:@"短信登录"
+                                       message:@"请输入手机号（哔哩哔哩短信登录）"
+                                      delegate:self
+                             cancelButtonTitle:@"取消"
+                             otherButtonTitles:@"发送验证码", nil];
+        @try { [a setAlertViewStyle:UIAlertViewStylePlainTextInput]; } @catch (NSException *e) { }
+        self.phoneAlert = a;
+        [a show];
+        BRINFO(@"[登录] 已弹出手机号输入框");
+    } @catch (NSException *e) {
+        BRERR(@"[登录] 弹出手机号框失败: %@", [e description]);
+        self.phoneAlert = nil;
+    }
+}
+
+- (void)showCodeAlert {
+    @try {
+        Class alertCls = NSClassFromString(@"UIAlertView");
+        if (alertCls == Nil) return;
+        id a = [[alertCls alloc] initWithTitle:@"短信登录"
+                                       message:[NSString stringWithFormat:
+                                                @"验证码已发送到 %@", self.phone ?: @""]
+                                      delegate:self
+                             cancelButtonTitle:@"取消"
+                             otherButtonTitles:@"登录", nil];
+        @try { [a setAlertViewStyle:UIAlertViewStylePlainTextInput]; } @catch (NSException *e) { }
+        self.codeAlert = a;
+        [a show];
+        BRINFO(@"[登录] 已弹出验证码输入框");
+    } @catch (NSException *e) {
+        BRERR(@"[登录] 弹出验证码框失败: %@", [e description]);
+        self.codeAlert = nil;
+    }
+}
+
+- (NSString *)textOfAlert:(id)a {
+    @try {
+        id tf = [a textFieldAtIndex:0];      // iOS 5+
+        if (tf != nil) {
+            NSString *s = [tf text];
+            return [(s ?: @"") stringByTrimmingCharactersInSet:
+                    [NSCharacterSet whitespaceAndNewlineCharacterSet]];
+        }
+    } @catch (NSException *e) { }
+    return @"";
+}
+
+- (void)alertView:(UIAlertView *)av clickedButtonAtIndex:(NSInteger)idx {
+    @try {
+        if (self.phoneAlert != nil && av == self.phoneAlert) {
+            NSString *ph = [self textOfAlert:av];
+            self.phoneAlert = nil;
+            if (idx == 0) { BRINFO(@"[登录] 使用者取消（手机号）"); return; }   // 取消
+            if ([ph length] < 11) {
+                BRINFO(@"[登录] 手机号长度不足: %@", ph);
+                [self toast:@"手机号看起来不对（需 11 位）"];
+                return;
+            }
+            self.phone = ph;
+            BRINFO(@"[登录] 请求发送验证码: %@", ph);
+            [self toast:@"正在发送验证码…"];
+            [BRLogin sendSmsToPhone:ph completion:^(BOOL ok, NSString *msg) {
+                if (ok) {
+                    BRINFO(@"[登录] 验证码已发送");
+                    [self performSelectorOnMainThread:@selector(showCodeAlert)
+                                           withObject:nil waitUntilDone:NO];
+                } else {
+                    BRERR(@"[登录] 发送失败: %@", msg);
+                    [self toast:[NSString stringWithFormat:@"发送失败：%@", msg ?: @"未知错误"]];
+                }
+            }];
+            return;
+        }
+        if (self.codeAlert != nil && av == self.codeAlert) {
+            NSString *code = [self textOfAlert:av];
+            NSString *ph = [self.phone copy];
+            self.codeAlert = nil;
+            if (idx == 0) { BRINFO(@"[登录] 使用者取消（验证码）"); return; }
+            if ([code length] < 4) {
+                [self toast:@"验证码看起来不对"];
+                return;
+            }
+            BRINFO(@"[登录] 请求短信登录: %@ / %@", ph, code);
+            [self toast:@"正在登录…"];
+            [BRLogin loginWithPhone:ph code:code completion:^(BOOL ok, NSString *msg) {
+                if (ok) {
+                    BRINFO(@"[登录] ★ 登录成功");
+                    [self toast:@"登录成功！请回到首页（可能需要重启 App）"];
+                } else {
+                    BRERR(@"[登录] 登录失败: %@", msg);
+                    [self toast:[NSString stringWithFormat:@"登录失败：%@", msg ?: @"未知错误"]];
+                }
+            }];
+            return;
+        }
+    } @catch (NSException *e) {
+        BRERR(@"[登录] 回调异常: %@", [e description]);
+    }
+}
+
+- (void)alertView:(UIAlertView *)av didDismissWithButtonIndex:(NSInteger)idx {
+    @try {
+        if (av == self.phoneAlert) self.phoneAlert = nil;
+        if (av == self.codeAlert)  self.codeAlert = nil;
+    } @catch (NSException *e) { }
+}
+
+- (void)toast:(NSString *)s {
+    BRINFO(@"[登录] %@", s);
+    @try {
+        Class alertCls = NSClassFromString(@"UIAlertView");
+        if (alertCls == Nil) return;
+        id a = [[alertCls alloc] initWithTitle:@"短信登录" message:s delegate:nil
+                             cancelButtonTitle:@"好" otherButtonTitles:nil];
+        [a performSelectorOnMainThread:@selector(show) withObject:nil waitUntilDone:NO];
+    } @catch (NSException *e) { }
+}
+
+@end
+
+// 供 Tweak.xm 呼叫（純 C，extern "C" 已在標頭處理）
+void BRLoginShowPanel(void) {
+    @try {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-loginbox-off"]) {
+            BRDBG(@"[登录] 面板已被 /tmp/br-loginbox-off 关闭");
+            return;
+        }
+        [[BRLoginPanel shared] beginFromNetworkSignal];
+    } @catch (NSException *e) {
+        BRERR(@"[登录] BRLoginShowPanel 异常: %@", [e description]);
+    }
+}
+
 #pragma mark - 登录页改造
 
 static char kBRLoginDoneKey;
