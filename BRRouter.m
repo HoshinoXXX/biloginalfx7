@@ -352,7 +352,18 @@ static NSData *BRRegionHttpGet(NSString *url) {
         [o setObject:([it objectForKey:@"uname"] ?: @"") forKey:@"name"];
         [o setObject:[NSString stringWithFormat:@"%lld", room] forKey:@"param"];
         [o setObject:@(online) forKey:@"online"];
-        [o setObject:BRPicFix([it objectForKey:@"cover"] ?: @"") forKey:@"cover"];
+        // [BRLIVECOVER_FB] ★ 直播封面是灰的：真機診斷顯示上游同時有
+        //   cover / cover_source / keyframe 三個候選欄位。
+        //   cover 為空時依序退回，避免整個列表都是灰框。
+        {
+            id cv = [it objectForKey:@"cover"];
+            if (![cv isKindOfClass:[NSString class]] || ![cv length])
+                cv = [it objectForKey:@"cover_source"];
+            if (![cv isKindOfClass:[NSString class]] || ![cv length])
+                cv = [it objectForKey:@"keyframe"];
+            if (![cv isKindOfClass:[NSString class]]) cv = @"";
+            [o setObject:BRPicFix(cv) forKey:@"cover"];
+        }
         [o setObject:BRPicFix([it objectForKey:@"face"] ?: @"") forKey:@"face"];
         if (midRaw != nil) {
             [o setObject:midRaw forKey:@"mid"];
@@ -559,10 +570,16 @@ static NSData *BRRegionHttpGet(NSString *url) {
         if (dmV == nil || ![dmV respondsToSelector:@selector(integerValue)]) {
             dmV = [st objectForKey:@"danmaku"] ?: @0;
         }
+        // [BRFIXALL] ★ 分區卡片「點不進去」：
+        //   真機日誌顯示 App 送出的 aid 是 2147483647（它自己的佔位符），
+        //   表示它**沒有採用我們填的 param** → 很可能它讀的是 item 的 `aid`。
+        //   所以 param / aid / avid 三個鍵都給（純新增，不影響既有行為）。
         return @{
             @"title":   [it objectForKey:@"title"] ?: @"",
             @"cover":   pic,
             @"param":   key,
+            @"aid":     key,
+            @"avid":    key,
             @"play":    playV,
             @"danmaku": dmV,
             @"finish":  @0,
@@ -1031,6 +1048,12 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
         [path isEqualToString:@"/x/web-interface/archive/stat"]) {
         NSString *aid = qs[@"aid"] ?: qs[@"avid"];
         NSString *bvid = qs[@"bvid"];
+        // [BRVIEWDIAG] 診斷「分區卡片點不進去」。
+        //   真機日誌顯示改寫後的 URL 是 aid=2147483647（= App 自己的佔位符），
+        //   但我餵給卡片的 param 是約 10 億的假 aid，照理不該變成佔位符 ——
+        //   所以要看清楚 App 究竟送了什麼進來。
+        BRINFO(@"[改写] view 请求：进来 aid=%@ bvid=%@ 原始query=%@",
+               aid ?: @"(nil)", bvid ?: @"(nil)", rawQuery ?: @"");
         // ★ 32 位溢出：客户端带来的是我们下发的假 aid，先还原
         if ([aid length]) {
             long long real = [BRStore realAidForFake:[aid longLongValue]];
@@ -1260,14 +1283,7 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
         [path isEqualToString:@"/x/web-interface/archive/related"] ||
         [path isEqualToString:@"/x/v2/view/related"]) {
         NSString *aid = qs[@"aid"] ?: qs[@"avid"] ?: @"";
-        long long aidIn = [aid longLongValue];
-        long long real = [BRStore realAidForFake:aidIn];
-        // [BRVIEWDIAG] 診斷「點不進去」：記錄進來的 aid 與映射結果。
-        //   真機日誌顯示改寫後的 URL 是 aid=2147483647（= int32 飽和值／App 佔位符），
-        //   但我餵給卡片的 param 是約 10 億的假 aid，照理不該飽和 ——
-        //   所以要先看清楚 App 究竟送了什麼進來，再決定修哪裡。
-        BRINFO(@"[改写] view 请求：进来 aid=%@(%lld) → 映射 real=%lld",
-               aid, aidIn, real);
+        long long real = [BRStore realAidForFake:[aid longLongValue]];
         if (real > 0) aid = [NSString stringWithFormat:@"%lld", real];
         r.url = [NSString stringWithFormat:
                  @"https://api.bilibili.com/x/web-interface/archive/related?aid=%@", aid];
@@ -2769,6 +2785,27 @@ static NSString *BRStripEm(NSString *s) {
         if ([dd isKindOfClass:[NSDictionary class]]) {
             id r = [dd objectForKey:@"result"];
             if ([r isKindOfClass:[NSArray class]]) result = r;
+            // [BRFIXALL] ★ 真機診斷：裝置拿到的回應是 `data.items`，
+            //   **沒有 data.result**（data 的鍵是 trackid,keyword,all_double_column,
+            //   page,app_display_option,nav,items,exp_str,next,attribute）。
+            //   所以兩個都要讀：items 可能是陣列，也可能是 {video:[...], media_bangumi:[...]}。
+            if (result == nil) {
+                id it = [dd objectForKey:@"items"];
+                if ([it isKindOfClass:[NSArray class]]) {
+                    result = it;
+                } else if ([it isKindOfClass:[NSDictionary class]]) {
+                    for (NSString *sub in @[@"video", @"media_bangumi", @"media_ft",
+                                            @"live_room", @"live", @"article", @"up"]) {
+                        id sv = [it objectForKey:sub];
+                        if ([sv isKindOfClass:[NSArray class]] && [sv count] > 0) {
+                            result = sv;
+                            BRINFO(@"[改写] search 从 data.items.%@ 取到 %lu 条",
+                                   sub, (unsigned long)[sv count]);
+                            break;
+                        }
+                    }
+                }
+            }
         }
         // [BRSEARCHDIAG] ★ 診斷：把實際回應結構印出來。
         //   本地實測 /x/web-interface/search/type?search_type=video 會回
