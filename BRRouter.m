@@ -2770,6 +2770,26 @@ static NSString *BRStripEm(NSString *s) {
             id r = [dd objectForKey:@"result"];
             if ([r isKindOfClass:[NSArray class]]) result = r;
         }
+        // [BRSEARCHDIAG] ★ 診斷：把實際回應結構印出來。
+        //   本地實測 /x/web-interface/search/type?search_type=video 會回
+        //     data.result = 20 筆、每筆 type='video'
+        //   但真機上「search 输出 0 条」→ 裝置拿到的結構與實測不同，
+        //   所以直接把 頂層鍵 / data 型別 / data 的鍵 / result 筆數 全部印出來。
+        @try {
+            NSString *topKeys = [[j allKeys] componentsJoinedByString:@","];
+            NSString *dType = dd ? NSStringFromClass([dd class]) : @"(nil)";
+            NSString *dKeys = [dd isKindOfClass:[NSDictionary class]]
+                ? [[dd allKeys] componentsJoinedByString:@","] : @"-";
+            NSString *rType = result ? @"array" : @"(nil)";
+            id r0 = ([result isKindOfClass:[NSArray class]] && [result count])
+                ? [result objectAtIndex:0] : nil;
+            NSString *r0Keys = [r0 isKindOfClass:[NSDictionary class]]
+                ? [[r0 allKeys] componentsJoinedByString:@","] : @"-";
+            BRINFO(@"[改写] search 诊断: body=%lu 顶层键=[%@] data型别=%@ data键=[%@] result=%@(%lu) 首项键=[%@]",
+                   (unsigned long)[body length], topKeys, dType, dKeys, rType,
+                   (unsigned long)([result isKindOfClass:[NSArray class]] ? [result count] : 0),
+                   r0Keys);
+        } @catch (NSException *e) { }
         NSMutableArray *videos = [NSMutableArray array];
         for (id raw in result) {
             if (![raw isKindOfClass:[NSDictionary class]]) continue;
