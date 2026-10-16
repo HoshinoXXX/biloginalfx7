@@ -1114,7 +1114,23 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
     //   → 拿到的是某个一级分区的内容 → 界面没内容/排版错。
     //   这里不改写，保持透传。
     if ([path rangeOfString:@"/region/show/dynamic"].location != NSNotFound) {
-        BRINFO(@"[改写] /x/v2/region/show/dynamic 是二级/动态分区 → 原样透传");
+        // [BRREGIONDYN] 原本是「原樣透傳」，但 2026-10-16 實測伺服器回
+        //   {"code":0,"data":[]}（空陣列）→ 二級分區內容全空。
+        //   而 newlist 對二級 tid 也是 0 筆（二級分區服務已關停），
+        //   只有 ranking/region 對二級 tid 4/4 有資料 → 改走它。
+        NSString *tid = qs[@"tid"] ?: qs[@"rid"] ?: qs[@"tag_id"] ?: qs[@"area_id"];
+        if ([tid length] &&
+            ![[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noregiondyn"]) {
+            BRRoute *rd = [[BRRoute alloc] init];
+            rd.url = [NSString stringWithFormat:
+                      @"https://api.bilibili.com/x/web-interface/ranking/region?rid=%@&day=3",
+                      tid];
+            rd.kind = @"regiondynx";
+            rd.note = @"二级分区内容（ranking/region）";
+            BRINFO(@"[改写] /x/v2/region/show/dynamic → ranking/region rid=%@", tid);
+            return rd;
+        }
+        BRINFO(@"[改写] /x/v2/region/show/dynamic 缺 tid → 维持原样透传");
         return nil;
     }
 
@@ -1449,6 +1465,74 @@ static NSString *BRStripEm(NSString *s) {
             if (nd != nil) return nd;
         } @catch (NSException *e) {
             BRERR(@"[改写] 番剧首页拼装异常: %@", [e description]);
+        }
+        return body;
+    }
+
+    // ================= [BRREGIONDYN] 二級分區內容 =================
+    //   2026-10-16 實測：/x/v2/region/show/dynamic 回 {"code":0,"data":[]}（空），
+    //   newlist 對二級 tid 全部 0 筆（二級分區服務已關停），
+    //   而 ranking/region 對二級 tid 4/4 都有資料 → 改走它。
+    //   元素欄位名取自二進位抽出的 BBPhoneMovieZoneRelatesModel
+    //   { aid, pic, play, review, title, video_review }（老式扁平影片物件）。
+    if ([route.kind isEqualToString:@"regiondynx"]) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noregiondyn"]) {
+            BRINFO(@"[改写] 二级分区内容转换已被 /tmp/br-noregiondyn 关闭");
+            return body;
+        }
+        @try {
+            NSDictionary *j = [self jsonFromData:body];
+            id list = [j objectForKey:@"data"];
+            if (![list isKindOfClass:[NSArray class]] || [list count] == 0) {
+                BRINFO(@"[改写] 二级分区内容：上游没有资料，原样返回");
+                return body;
+            }
+            NSMutableArray *out = [NSMutableArray array];
+            for (id one in list) {
+                if (![one isKindOfClass:[NSDictionary class]]) continue;
+                id aidRaw = [one objectForKey:@"aid"];
+                if (aidRaw == nil) aidRaw = [one objectForKey:@"id"];
+                long long aidLL = 0;
+                if ([aidRaw respondsToSelector:@selector(longLongValue)])
+                    aidLL = [aidRaw longLongValue];
+                else if ([aidRaw isKindOfClass:[NSString class]])
+                    aidLL = [(NSString *)aidRaw longLongValue];
+                long long fake = [BRStore fakeAidForReal:aidLL];
+                if (fake <= 0) continue;
+                NSDictionary *st = [one objectForKey:@"stat"];
+                if (![st isKindOfClass:[NSDictionary class]]) st = @{};
+                id play = [one objectForKey:@"play"];
+                if (play == nil) play = [st objectForKey:@"view"];
+                id dm = [one objectForKey:@"video_review"];
+                if (dm == nil) dm = [st objectForKey:@"danmaku"];
+                id rv = [one objectForKey:@"review"];
+                if (rv == nil) rv = [st objectForKey:@"reply"];
+                // aid 用虛擬化後的值（老客戶端 avid 是 int32，真實 15 位會溢出）
+                [out addObject:@{
+                    @"aid":          [NSString stringWithFormat:@"%lld", fake],
+                    @"title":        [one objectForKey:@"title"] ?: @"",
+                    @"pic":          BRPicFix([one objectForKey:@"pic"] ?: @""),
+                    @"play":         (play ?: @0),
+                    @"video_review": (dm ?: @0),
+                    @"review":       (rv ?: @0),
+                    @"favorites":    ([st objectForKey:@"favorite"] ?: @0),
+                    @"coins":        ([st objectForKey:@"coin"] ?: @0),
+                    @"author":       ([one objectForKey:@"author"] ?: @""),
+                    @"mid":          ([one objectForKey:@"mid"] ?: @0),
+                    @"duration":     ([one objectForKey:@"duration"] ?: @""),
+                    @"create":       ([one objectForKey:@"create"] ?: @""),
+                    @"description":  ([one objectForKey:@"description"] ?: @""),
+                    @"typename":     ([one objectForKey:@"typename"] ?: @""),
+                }];
+            }
+            if ([out count] == 0) return body;
+            BRINFO(@"[改写] 二级分区内容转换：%lu 笔", (unsigned long)[out count]);
+            NSDictionary *o = @{ @"code": @0, @"message": @"0",
+                                 @"data": out, @"result": out, @"list": out };
+            NSData *nd = [self dataFromJSON:[self fixImages:o]];
+            if (nd != nil) return nd;
+        } @catch (NSException *e) {
+            BRERR(@"[改写] 二级分区内容转换异常: %@", [e description]);
         }
         return body;
     }
