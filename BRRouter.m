@@ -66,7 +66,7 @@ static NSString *BRFmtDuration(id d) {
 static BOOL BRConvOff(NSString *kind) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([fm fileExistsAtPath:@"/tmp/br-noconv"]) return YES;
-    if ([route.kind length]) {
+    if ([kind length]) {
         NSString *p = [NSString stringWithFormat:@"/tmp/br-noconv-%@", kind];
         if ([fm fileExistsAtPath:p]) return YES;
     }
