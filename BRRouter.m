@@ -580,6 +580,81 @@ static NSData *BRRegionHttpGet(NSString *url) {
 //   上游 xlive getList 實測可用；轉換沿用 brLiveRoomFromDict:（已補上 param/name）。
 //   /tmp/br-nolivecard 可關閉。
 // =====================================================================
+
+// =====================================================================
+// [BRRECCARD] 首頁「热门焦点」卡的元素（type=recommend, param=''）
+//   形狀取自 App 自帶 config 的該卡樣本：
+//     { title, cover, param(影片 id 字串), goto, play, danmaku, finish }
+//   上游沿用 feed 轉換器用的那條（需要 wbi 簽名），廣告過濾規則也一致。
+//   ★ 只新增，不動 feed 路由本身。
+//   /tmp/br-norecommendcard 可關閉。
+// =====================================================================
+static NSArray *BRRecommendCardItems(NSUInteger want) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-norecommendcard"]) {
+            BRDBG(@"[改写] 热门焦点卡已被 /tmp/br-norecommendcard 关闭");
+            return out;
+        }
+        // ★ ps 給多一點：廣告/非影片條目會被過濾掉，要留餘裕才湊得到 want 條
+        NSString *base = [NSString stringWithFormat:
+            @"https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd"
+            @"?ps=%lu&fresh_type=3&platform=web&version=1",
+            (unsigned long)(want + 6)];
+        NSData *dt = BRRegionHttpGet([BRSession wbiSignURL:base]);
+        if (dt == nil) return out;
+        NSDictionary *j = [BRRouter jsonFromData:dt];
+        NSDictionary *dd = [j objectForKey:@"data"];
+        NSArray *src = nil;
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id it = [dd objectForKey:@"item"];
+            if ([it isKindOfClass:[NSArray class]]) src = it;
+        } else if ([dd isKindOfClass:[NSArray class]]) {
+            src = dd;
+        }
+        if (![src isKindOfClass:[NSArray class]]) return out;
+
+        for (id raw in (NSArray *)src) {
+            if ([out count] >= want) break;
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *it = raw;
+            // 與 feed 轉換器同一套廣告/非影片過濾
+            NSString *g = [it objectForKey:@"goto"];
+            if ([g isKindOfClass:[NSString class]] && [g length] > 0 &&
+                ![g isEqualToString:@"av"] && ![g isEqualToString:@"video"]) continue;
+            if ([it objectForKey:@"ad_info"] != nil) continue;
+            id isAd = [it objectForKey:@"is_ad"];
+            if (isAd != nil && [isAd respondsToSelector:@selector(boolValue)] &&
+                [isAd boolValue]) continue;
+
+            id aidRaw = [it objectForKey:@"id"];
+            if (aidRaw == nil) aidRaw = [it objectForKey:@"aid"];
+            long long aidLL = 0;
+            if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+            else if ([aidRaw isKindOfClass:[NSString class]]) aidLL = [(NSString *)aidRaw longLongValue];
+            long long fake = [BRStore fakeAidForReal:aidLL];
+            if (fake <= 0) continue;
+
+            NSDictionary *stat = [it objectForKey:@"stat"];
+            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
+            NSString *pic = BRPicFix([it objectForKey:@"pic"] ?: [it objectForKey:@"cover"] ?: @"");
+            [out addObject:@{
+                @"title":   [it objectForKey:@"title"] ?: @"",
+                @"cover":   pic,
+                @"param":   [NSString stringWithFormat:@"%lld", fake],
+                @"goto":    ([g length] ? g : @"av"),
+                @"play":    ([stat objectForKey:@"view"] ?: @0),
+                @"danmaku": ([stat objectForKey:@"danmaku"] ?: @0),
+                @"finish":  @0,
+            }];
+        }
+        BRINFO(@"[改写] 热门焦点卡：组出 %lu 条", (unsigned long)[out count]);
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 热门焦点卡异常: %@", [e description]);
+    }
+    return out;
+}
+
 static NSArray *BRLiveCardItems(NSUInteger want) {
     NSMutableArray *out = [NSMutableArray array];
     @try {
@@ -1985,6 +2060,23 @@ static NSString *BRStripEm(NSString *s) {
                 if (usable > 0) continue;      // 真有数据 → 保留原样
                 if (rid == nil) {              // 没有 rid 就不是分区卡
                     BRDBG(@"[改写] oldhome 卡片%lu 跳过（无 rid）", (unsigned long)ci);
+                    continue;
+                }
+
+                // [BRRECCARD] 「热门焦点」卡（type=recommend，param=''）
+                //   這是首頁第一張卡，param 是空的 → 原本被 rid 判斷跳過，從未被填。
+                if ([[card objectForKey:@"type"] isKindOfClass:[NSString class]] &&
+                    [[card objectForKey:@"type"] isEqualToString:@"recommend"]) {
+                    NSArray *rs = BRRecommendCardItems(6);
+                    if ([rs count] > 0) {
+                        NSString *bk4 = bodyKey ?: @"body";
+                        [card setObject:rs forKey:bk4];
+                        [cards replaceObjectAtIndex:ci withObject:card];
+                        filled++;
+                        BRINFO(@"[改写] oldhome 已填热门焦点卡 %lu 条", (unsigned long)[rs count]);
+                    } else {
+                        BRDBG(@"[改写] oldhome 热门焦点卡取不到内容，保持原样");
+                    }
                     continue;
                 }
 
