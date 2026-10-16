@@ -2598,6 +2598,10 @@ static NSString *BRStripEm(NSString *s) {
                 @"duration":     BRFmtDuration([r objectForKey:@"duration"]),
                 @"pubdate":      pub ?: @0,
                 @"typename":     [r objectForKey:@"tname"] ?: @"",
+                // [BRTIDKEY] 二進位反查：typeid → 0 次、tid → 185 次。
+                //   這個 App 讀的是 tid；而這裡是「新建字典」，上游的 tid
+                //   不會被保留 → App 讀不到分區 id。兩個都發。
+                @"tid":          [r objectForKey:@"tid"] ?: @0,
                 @"typeid":       [r objectForKey:@"tid"] ?: @0,
                 @"arcurl":       [NSString stringWithFormat:@"http://www.bilibili.com/video/av%lld", aidLL],
             }];
@@ -2885,6 +2889,10 @@ static NSString *BRStripEm(NSString *s) {
                 @"pubdate":      pub ?: @0,
                 @"pts":          pts ?: @0,
                 @"typename":     [r objectForKey:@"tname"] ?: @"",
+                // [BRTIDKEY] 二進位反查：typeid → 0 次、tid → 185 次。
+                //   這個 App 讀的是 tid；而這裡是「新建字典」，上游的 tid
+                //   不會被保留 → App 讀不到分區 id。兩個都發。
+                @"tid":          [r objectForKey:@"tid"] ?: @0,
                 @"typeid":       [r objectForKey:@"tid"] ?: @0,
                 @"arcurl":       [NSString stringWithFormat:@"http://www.bilibili.com/video/av%lld", aidLL],
             }];
