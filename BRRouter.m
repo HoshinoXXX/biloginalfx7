@@ -1200,11 +1200,33 @@ static NSData *BRRegionHttpGet(NSString *url) {
             return r;
         }
         if ([mid length]) {
-            NSString *b = [NSString stringWithFormat:
-                           @"https://api.bilibili.com/x/space/wbi/acc/info?mid=%@", mid];
-            r.url = [BRSession wbiSignURL:b];
-            r.kind = @"nav";
-            r.note = @"个人主页信息";
+            // [BRSPACECARD] 原本用 space/wbi/acc/info，有兩個獨立問題：
+            //   ①【形狀】App 的模型叫 BBPhoneUserSpaceCardModel，其 ivar 是
+            //      _DisplayRank/_approve/_article/_attention/_attentions/_birthday/
+            //      _face/_fans/_level_info/_mid/_name/_nameplate/_official_verify/
+            //      _pendant/_rank/_sex/_sign/_spacesta/_vip …
+            //      而 web-interface/card 的 data.card 欄位是
+            //      DisplayRank/approve/article/attention/attentions/birthday/
+            //      face/fans/level_info/mid/name/nameplate/official_verify/
+            //      pendant/rank/sex/sign/spacesta/vip …
+            //      → 連 "DisplayRank" 的大寫 D 都一樣，代表 App 解析的是
+            //        **card 巢狀結構**；而 acc/info 回的是扁平物件 → 形狀不對。
+            //   ②【端點】2026-10-16 實測：acc/info 對老/現代 UA 都回
+            //      -352（风控 v_voucher）→ 個人主頁空白。
+            //   改用 web-interface/card：形狀本來就對，原樣透傳即可。
+            if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nospacecard"]) {
+                BRINFO(@"[改写] 个人主页信息已回退 acc/info（/tmp/br-nospacecard）");
+                NSString *bb = [NSString stringWithFormat:
+                                @"https://api.bilibili.com/x/space/wbi/acc/info?mid=%@", mid];
+                r.url = [BRSession wbiSignURL:bb];
+                r.kind = @"nav";
+                r.note = @"个人主页信息（回退 acc/info）";
+                return r;
+            }
+            r.url = [NSString stringWithFormat:
+                     @"https://api.bilibili.com/x/web-interface/card?mid=%@&photo=false", mid];
+            r.kind = @"raw";
+            r.note = @"个人主页信息（web-interface/card）";
             return r;
         }
     }
