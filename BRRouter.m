@@ -365,6 +365,28 @@ static NSData *BRRegionHttpGet(NSString *url) {
             [o setObject:BRPicFix(cv) forKey:@"cover"];
         }
         [o setObject:BRPicFix([it objectForKey:@"face"] ?: @"") forKey:@"face"];
+        // [BRMODELFILL] ★ 對照模型 BiliLiveItem（18 個 ivar），
+        //   我們原本只給了 9 個；缺的這些 App 會取到 nil。
+        //   全部純新增，成本極低。
+        {
+            id v1 = [it objectForKey:@"vip"];
+            id v2 = [it objectForKey:@"svip"];
+            [o setObject:(v1 ?: @0) forKey:@"vip"];
+            [o setObject:(v2 ?: @0) forKey:@"svip"];
+            id cm = [it objectForKey:@"cmt"];
+            [o setObject:(cm ?: @0) forKey:@"cmt"];
+            [o setObject:(cm ?: @0) forKey:@"comment"];
+            id ct = [it objectForKey:@"create"];
+            id ca = [it objectForKey:@"create_at"];
+            [o setObject:(ct ?: @0) forKey:@"create"];
+            [o setObject:(ca ?: @0) forKey:@"create_at"];
+            id st = [it objectForKey:@"start"];
+            id sa = [it objectForKey:@"start_at"];
+            [o setObject:(st ?: @0) forKey:@"start"];
+            [o setObject:(sa ?: @0) forKey:@"start_at"];
+            id sc = [it objectForKey:@"sch_id"];
+            [o setObject:(sc ?: @0) forKey:@"sch_id"];
+        }
         if (midRaw != nil) {
             [o setObject:midRaw forKey:@"mid"];
             [o setObject:midRaw forKey:@"uid"];
@@ -410,6 +432,14 @@ static NSData *BRRegionHttpGet(NSString *url) {
             [d setObject:(dow ?: @0) forKey:@"day_of_week"];
             [d setObject:(dow ?: @0) forKey:@"dayIndex"];
             [d setObject:([day objectForKey:@"is_today"] ?: @0) forKey:@"is_today"];
+            // [BRMODELFILL_TL] 對照 BBPhoneBangumiTimelineModel（16 個 ivar），
+            //   補上缺少的 badge 與 season_status（純新增）。
+            {
+                id bd = [day objectForKey:@"badge"];
+                [d setObject:(bd ?: @"") forKey:@"badge"];
+                id ss = [day objectForKey:@"season_status"];
+                [d setObject:(ss ?: @0) forKey:@"season_status"];
+            }
             NSMutableArray *eps = [NSMutableArray array];
             id rawEps = [day objectForKey:@"episodes"];
             if ([rawEps isKindOfClass:[NSArray class]]) {
