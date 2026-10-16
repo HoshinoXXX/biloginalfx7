@@ -333,6 +333,12 @@ static NSData *BRRegionHttpGet(NSString *url) {
         [o setObject:@(room) forKey:@"roomid"];
         [o setObject:([it objectForKey:@"title"] ?: @"") forKey:@"title"];
         [o setObject:([it objectForKey:@"uname"] ?: @"") forKey:@"uname"];
+        // [BRLIVECARD] 首頁「正在直播」卡（config 樣本）的元素欄位是
+        //   { title, cover, param, name, face, online, area, area_id, finish }
+        //   其中 param 是 **room_id 的字串**（樣本 '37034'）、name 是主播名。
+        //   這裡補上這兩個別名 —— 純新增，不會影響直播 tab（它讀 room_id/uname）。
+        [o setObject:([it objectForKey:@"uname"] ?: @"") forKey:@"name"];
+        [o setObject:[NSString stringWithFormat:@"%lld", room] forKey:@"param"];
         [o setObject:@(online) forKey:@"online"];
         [o setObject:BRPicFix([it objectForKey:@"cover"] ?: @"") forKey:@"cover"];
         [o setObject:BRPicFix([it objectForKey:@"face"] ?: @"") forKey:@"face"];
@@ -564,6 +570,70 @@ static NSData *BRRegionHttpGet(NSString *url) {
 //   mtime 介面沒有 → 留空字串。
 //   /tmp/br-nobangumicard 可關閉（回到原本的 region 形狀）。
 // =====================================================================
+
+// =====================================================================
+// [BRLIVECARD] 首頁「正在直播」卡的元素
+//   config 的該卡：type=live, param=''（所以「param 是正整數」的判斷會跳過它）
+//   → 它從來沒被填過，一直吃已死的老 feed 內容。
+//   形狀（config 樣本）：
+//     { title, cover, param(room_id 字串), name, face, online, area, area_id, finish }
+//   上游 xlive getList 實測可用；轉換沿用 brLiveRoomFromDict:（已補上 param/name）。
+//   /tmp/br-nolivecard 可關閉。
+// =====================================================================
+static NSArray *BRLiveCardItems(NSUInteger want) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nolivecard"]) {
+            BRDBG(@"[改写] 直播推荐卡已被 /tmp/br-nolivecard 关闭");
+            return out;
+        }
+        NSData *dt = BRRegionHttpGet(
+            @"https://api.live.bilibili.com/xlive/web-interface/v1/index/getList?platform=web");
+        if (dt == nil) return out;
+        NSDictionary *j = [BRRouter jsonFromData:dt];
+        NSDictionary *dd = [j objectForKey:@"data"];
+        if (![dd isKindOfClass:[NSDictionary class]]) return out;
+
+        NSMutableArray *raw = [NSMutableArray array];
+        id rec = [dd objectForKey:@"recommend_room_list"];
+        if ([rec isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:rec];
+        id rl = [dd objectForKey:@"room_list"];
+        if ([rl isKindOfClass:[NSArray class]]) {
+            for (id g in (NSArray *)rl) {
+                if (![g isKindOfClass:[NSDictionary class]]) continue;
+                id sub2 = [g objectForKey:@"list"];
+                if ([sub2 isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:sub2];
+            }
+        }
+        NSMutableSet *seen = [NSMutableSet set];
+        for (id one in raw) {
+            if ([out count] >= want) break;
+            if (![one isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *room = [BRRouter brLiveRoomFromDict:one];
+            if (room == nil) continue;
+            NSString *k = [[room objectForKey:@"room_id"] description];
+            if (k == nil || [seen containsObject:k]) continue;
+            [seen addObject:k];
+            // 只保留該卡需要的欄位（外加 finish）
+            [out addObject:@{
+                @"title":   [room objectForKey:@"title"] ?: @"",
+                @"cover":   [room objectForKey:@"cover"] ?: @"",
+                @"param":   [room objectForKey:@"param"] ?: @"",
+                @"name":    [room objectForKey:@"name"] ?: @"",
+                @"face":    [room objectForKey:@"face"] ?: @"",
+                @"online":  [room objectForKey:@"online"] ?: @0,
+                @"area":    [room objectForKey:@"area"] ?: @"",
+                @"area_id": [room objectForKey:@"area_id"] ?: @0,
+                @"finish":  @0,
+            }];
+        }
+        BRINFO(@"[改写] 直播推荐卡：组出 %lu 间", (unsigned long)[out count]);
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 直播推荐卡异常: %@", [e description]);
+    }
+    return out;
+}
+
 static NSArray *BRBangumiCardItems(NSUInteger want) {
     NSMutableArray *out = [NSMutableArray array];
     @try {
@@ -1915,6 +1985,24 @@ static NSString *BRStripEm(NSString *s) {
                 if (usable > 0) continue;      // 真有数据 → 保留原样
                 if (rid == nil) {              // 没有 rid 就不是分区卡
                     BRDBG(@"[改写] oldhome 卡片%lu 跳过（无 rid）", (unsigned long)ci);
+                    continue;
+                }
+
+                // [BRLIVECARD] 「正在直播」卡（type=live，param=''）
+                //   因為 param 不是正整數，原本會被下面的 rid 判斷跳過 → 從未被填。
+                //   形狀取自 config 樣本，資料用 xlive getList。
+                if ([[card objectForKey:@"type"] isKindOfClass:[NSString class]] &&
+                    [[card objectForKey:@"type"] isEqualToString:@"live"]) {
+                    NSArray *ls = BRLiveCardItems(4);
+                    if ([ls count] > 0) {
+                        NSString *bk3 = bodyKey ?: @"body";
+                        [card setObject:ls forKey:bk3];
+                        [cards replaceObjectAtIndex:ci withObject:card];
+                        filled++;
+                        BRINFO(@"[改写] oldhome 已填直播推荐卡 %lu 间", (unsigned long)[ls count]);
+                    } else {
+                        BRDBG(@"[改写] oldhome 直播推荐卡取不到内容，保持原样");
+                    }
                     continue;
                 }
 
