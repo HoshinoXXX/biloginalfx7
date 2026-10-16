@@ -264,24 +264,9 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
         //   所以这类请求不动它。
         if ([low rangeOfString:@"oauth2/"].location != NSNotFound) {
             BRINFO(@"[登录] oauth2 请求原样透传: %@", path);
-            // [BRLOGINBOX] 老密碼登入介面已關停，App 取不到 RSA 公鑰 →
-            //   使用者只會看到「網絡錯誤」。所以我們在網路層偵測到這個意圖時，
-            //   改彈出插件自己的簡訊登入面板（完全不碰 App 界面）。
-            //   ① 只認 getKey / oauth2/login，避免其他請求誤觸
-            //   ② 啟動後 5 秒內不彈（App 可能在啟動時預取公鑰）
-            //   ③ /tmp/br-loginbox-off 可完全關閉
-            if ([low rangeOfString:@"getkey"].location != NSNotFound ||
-                [low rangeOfString:@"oauth2/login"].location != NSNotFound) {
-                static NSTimeInterval sBRLoadTime = 0;
-                if (sBRLoadTime == 0) sBRLoadTime = [[NSDate date] timeIntervalSince1970];
-                NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
-                if (now - sBRLoadTime > 5.0) {
-                    BRINFO(@"[登录] 侦测到登录意图，弹出短信登录面板");
-                    BRLoginShowPanel();
-                } else {
-                    BRDBG(@"[登录] 登录意图出现在启动 5 秒内，忽略（避免突兀弹窗）");
-                }
-            }
+            // [BRLOGINTRIGGER] 登入面板的觸發點已上移到 BRRewriteRequestEx
+            //   （原本寫在這裡，但 /oauth2/login 會提早 return 到不了 →
+            //    條件裡的 oauth2/login 是死碼。這是血淚教訓，別再放回來。）
             return nil;
         }
         BOOL isSmsSend  = ([low rangeOfString:@"/sms/send"].location != NSNotFound);
@@ -400,6 +385,27 @@ static NSURLRequest *BRRewriteRequestEx(NSURLRequest *req, BRRoute **outRoute) {
             if ([low rangeOfString:@"login"].location != NSNotFound ||
                 [low rangeOfString:@"sms"].location != NSNotFound ||
                 [low rangeOfString:@"oauth"].location != NSNotFound) {
+
+                // [BRLOGINTRIGGER] 統一的登入意圖偵測 —— 放在**這個區塊的開頭**，
+                //   而不是更裡面。原因：下面 /oauth2/login 那條會提早 return，
+                //   寫在它後面的程式碼到不了（實際踩過，條件形同死碼）。
+                //   老密碼登入介面已關停，App 取不到 RSA 公鑰 → 使用者只看到「網絡錯誤」。
+                //   所以在網路層偵測到意圖時，改彈插件自己的簡訊登入面板（不碰 App 界面）。
+                //   ① 只認 getKey / oauth2/login，避免其他請求誤觸
+                //   ② 啟動後 5 秒內不彈（App 可能在啟動時預取公鑰）
+                //   ③ /tmp/br-loginbox-off 可完全關閉
+                if ([low rangeOfString:@"getkey"].location != NSNotFound ||
+                    [low rangeOfString:@"oauth2/login"].location != NSNotFound) {
+                    static NSTimeInterval sBRLoadTime = 0;
+                    if (sBRLoadTime == 0) sBRLoadTime = [[NSDate date] timeIntervalSince1970];
+                    NSTimeInterval now = [[NSDate date] timeIntervalSince1970];
+                    if (now - sBRLoadTime > 5.0) {
+                        BRINFO(@"[登录] 侦测到登录意图，弹出短信登录面板");
+                        BRLoginShowPanel();
+                    } else {
+                        BRDBG(@"[登录] 登录意图出现在启动 5 秒内，忽略（避免突兀弹窗）");
+                    }
+                }
                 // ★★★ 密码登录 -> 短信登录 翻译
         //   用户要求：手机号/账户框填手机号、密码框填验证码。
         //   老接口 /api/oauth2/login 已关停，这里把它的 username/password
