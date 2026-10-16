@@ -2055,14 +2055,26 @@ static NSString *BRStripEm(NSString *s) {
                 // [BRFILL_V2] 判断「这一槽位到底有没有真数据」——
                 //   光看个数是错的：老接口已死，body 常常是 4 个长度非 0 的空壳
                 //   （正好对应界面上的灰框 / 播放量「-」/ 弹幕 0）。
+                // [BRUSABLE2] ★ 判斷「這一槽位到底有沒有可顯示的資料」。
+                //   原本只看 title + param，但 App 自己的空殼常常**有這兩個、
+                //   卻沒有封面也沒有播放量**（畫面症狀：灰框 + 播放量「-」+ 彈幕「0」）。
+                //   那樣會被誤判成「有資料」而 continue → 永遠不填。
+                //   所以再加上 cover 與 play 兩個必要條件。
                 NSUInteger usable = 0;
                 for (id e in curBody) {
                     if (![e isKindOfClass:[NSDictionary class]]) continue;
                     id t2 = [e objectForKey:@"title"];
                     id p2 = [e objectForKey:@"param"];
+                    id c2 = [e objectForKey:@"cover"];
+                    id v2 = [e objectForKey:@"play"];
                     NSString *ts = (t2 && t2 != [NSNull null]) ? [NSString stringWithFormat:@"%@", t2] : @"";
                     NSString *ps = (p2 && p2 != [NSNull null]) ? [NSString stringWithFormat:@"%@", p2] : @"";
-                    if ([ts length] > 0 && [ps length] > 0 && [ps intValue] > 0) usable++;
+                    NSString *cs = (c2 && c2 != [NSNull null]) ? [NSString stringWithFormat:@"%@", c2] : @"";
+                    long long pv = 0;
+                    if ([v2 respondsToSelector:@selector(longLongValue)]) pv = [v2 longLongValue];
+                    else if ([v2 isKindOfClass:[NSString class]]) pv = [(NSString *)v2 longLongValue];
+                    if ([ts length] > 0 && [ps length] > 0 && [ps intValue] > 0 &&
+                        [cs length] > 0 && pv > 0) usable++;
                 }
 
                 // 每张卡片都记日志（15 张全印），这样一眼能看出真实字段名与槽位状态
