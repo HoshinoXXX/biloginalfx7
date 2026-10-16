@@ -2781,8 +2781,17 @@ static NSString *BRStripEm(NSString *s) {
             [d setObject:[owner objectForKey:@"face"] forKey:@"face"];
         if ([d objectForKey:@"created"] == nil && [d objectForKey:@"pubdate"] != nil)
             [d setObject:[d objectForKey:@"pubdate"] forKey:@"created"];
-        if ([d objectForKey:@"typename"] == nil && [d objectForKey:@"tname"] != nil)
-            [d setObject:[d objectForKey:@"tname"] forKey:@"typename"];
+        // [BRTYPENAME] 二進位反查結果：
+        //     @"typename"  → 0 次   （我原本只發這個 → App 不會讀 → 分類名空白）
+        //     @"type_name" → 10 次  （BBPhoneVideoV2 的 ivar 就是 _type_name）
+        //   所以兩個都發：type_name 是這個 App 真正讀的，typename 留作相容別名。
+        if ([d objectForKey:@"tname"] != nil) {
+            id tn = [d objectForKey:@"tname"];
+            if ([d objectForKey:@"type_name"] == nil)
+                [d setObject:tn forKey:@"type_name"];
+            if ([d objectForKey:@"typename"] == nil)
+                [d setObject:tn forKey:@"typename"];
+        }
 
         id pages = [d objectForKey:@"pages"];
         if ([pages isKindOfClass:[NSArray class]] && [(NSArray *)pages count]) {
