@@ -2,6 +2,7 @@
 #import "BRRouter.h"
 #import "BRStore.h"
 #import "BRSession.h"
+#import "BRURLProtocol.h"   // [BRPREFETCH] kBRInternalKey（内部请求标记）
 #import "BRLog.h"
 
 @implementation BRRoute
@@ -155,6 +156,105 @@ static BOOL BRIsGzipResponse(NSURLResponse *r) {
 // ---------------------------------------------------------------------------
 
 // 直连 GET（同步；调用方在后台线程 —— 同步路径本来就是后台）
+// [BRPREFETCH] 分區結果快取 —— 提升到檔案級，讓並行預取能先灌進來。
+//   key = rid（字串），value = @{@"t": 時間, @"v": 已轉換的陣列}
+//   TTL 120 秒（原本 fetchRegionVideos 內就有這個快取，這裡只是搬上來共用）。
+static NSMutableDictionary *gBRRegionCache = nil;
+
+// =====================================================================
+// [BRPREFETCH] 並行預取分區榜單
+//   原本 15 個分區**循序**抓 ranking/region，實測要 52 秒 → 首頁卡住近一分鐘。
+//   這裡改成併發（同時最多 5 條），先收進臨時字典，全部結束後
+//   **在當前執行緒**一次性併入 gBRRegionCache；
+//   後面既有的循序迴圈就全部命中快取 → 總時間從 ~52 秒降到約 10 秒。
+//
+//   為什麼現在才能並行：BRRegionHttpGet 原本只靠執行緒閘門（BRFetchDepth），
+//   只能在「已在抓取的同一條執行緒」上發出；本補丁為它補上了
+//   request 標記 kBRInternalKey（執行緒無關）→ 跨執行緒才安全。
+//
+//   安全性：
+//     ① 併發限 5，避免一次 15 條觸發 B 站風控
+//     ② 併入快取只在本執行緒做 → gBRRegionCache 不會被多執行緒同時寫
+//     ③ 任何失敗都不影響原流程（沒灌進快取，迴圈照舊自己抓）
+//     ④ /tmp/br-noprefetch 可完全關閉
+// =====================================================================
+// [BRPREFETCH] 前置宣告 —— BRRegionHttpGet 的定義在下面，
+//   不先宣告會在 C99 下變成隱式宣告 → 編譯錯誤。
+static NSData *BRRegionHttpGet(NSString *url);
+
+static void BRPrefetchRegionRank(NSArray *rids) {
+    if (![rids isKindOfClass:[NSArray class]] || [rids count] == 0) return;
+    @try {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noprefetch"]) {
+            BRDBG(@"[改写] 并行预取已被 /tmp/br-noprefetch 关闭");
+            return;
+        }
+        NSTimeInterval t0 = [[NSDate date] timeIntervalSince1970];
+        NSMutableDictionary *pre = [[NSMutableDictionary alloc] init];
+        dispatch_semaphore_t sem = dispatch_semaphore_create(5);
+        dispatch_group_t grp = dispatch_group_create();
+        dispatch_queue_t q = dispatch_get_global_queue(DISPATCH_QUEUE_PRIORITY_DEFAULT, 0);
+
+        for (NSString *rid in rids) {
+            dispatch_group_async(grp, q, ^{
+                dispatch_semaphore_wait(sem, DISPATCH_TIME_FOREVER);
+                @try {
+                    NSString *u = [NSString stringWithFormat:
+                        @"https://api.bilibili.com/x/web-interface/ranking/region"
+                        @"?rid=%@&day=3", rid];
+                    NSData *d = BRRegionHttpGet(u);
+                    if (d != nil) {
+                        NSDictionary *j = [BRRouter jsonFromData:d];
+                        id lst = [j objectForKey:@"data"];
+                        if ([lst isKindOfClass:[NSArray class]] &&
+                            [(NSArray *)lst count] > 0) {
+                            NSMutableArray *out = [NSMutableArray array];
+                            NSMutableSet *seen = [NSMutableSet set];
+                            for (id one in (NSArray *)lst) {
+                                if (![one isKindOfClass:[NSDictionary class]]) continue;
+                                NSDictionary *e =
+                                    [BRRouter brRegionElement:one
+                                                    playValue:[one objectForKey:@"play"]
+                                                 danmakuValue:[one objectForKey:@"video_review"]
+                                                         seen:seen];
+                                if (e != nil) [out addObject:e];
+                            }
+                            if ([out count] > 0) {
+                                @synchronized (pre) {
+                                    [pre setObject:@{
+                                        @"t": @([[NSDate date] timeIntervalSince1970]),
+                                        @"v": out
+                                    } forKey:rid];
+                                }
+                            }
+                        }
+                    }
+                } @catch (NSException *e) { }
+                dispatch_semaphore_signal(sem);
+            });
+        }
+
+        // 最多等 25 秒（首頁總預算 55 秒的一部分）
+        long w = dispatch_group_wait(grp,
+                                     dispatch_time(DISPATCH_TIME_NOW,
+                                                   (int64_t)(25 * NSEC_PER_SEC)));
+
+        // ★ 只在本執行緒併入 → 不會有多執行緒競爭
+        @synchronized (gBRRegionCache) {
+            if (gBRRegionCache == nil) {
+                gBRRegionCache = [[NSMutableDictionary alloc] init];
+            }
+            [gBRRegionCache addEntriesFromDictionary:pre];
+        }
+        BRINFO(@"[改写] oldhome 并行预取：%lu 个分区，命中 %lu 个，耗时 %.1f 秒%@",
+               (unsigned long)[rids count], (unsigned long)[pre count],
+               [[NSDate date] timeIntervalSince1970] - t0,
+               (w != 0) ? @"（等待超时，未全部完成，其余回圈自己抓）" : @"");
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 并行预取异常（不影响原流程）: %@", [e description]);
+    }
+}
+
 static NSData *BRRegionHttpGet(NSString *url) {
     @try {
         Class reqCls = NSClassFromString(@"NSMutableURLRequest");
@@ -166,6 +266,15 @@ static NSData *BRRegionHttpGet(NSString *url) {
         [rq setTimeoutInterval:3];   // ★ 8s 太久，会把首页请求卡死
         [rq setValue:@"Mozilla/5.0 BiliDroid/2.0.1 (bbcallen@gmail.com) os/android"
    forHTTPHeaderField:@"User-Agent"];
+        // [BRPREFETCH] 打上「內部請求」標記 —— 這是**執行緒無關**的遞迴保護。
+        //   BRURLProtocol 的 canInitWithRequest: 看到這個標記就直接放行。
+        //   原本只靠執行緒閘門 BRFetchDepth，所以我們的請求只能在
+        //   「已經在抓取的同一條執行緒」上發出 → 無法並行。補上標記後才安全。
+        @try {
+            [NSClassFromString(@"NSURLProtocol") setProperty:@YES
+                                                       forKey:kBRInternalKey
+                                                    inRequest:rq];
+        } @catch (NSException *e) { }
         return [connCls sendSynchronousRequest:rq returningResponse:NULL error:NULL];
     } @catch (NSException *e) { return nil; }
 }
@@ -441,7 +550,7 @@ static NSData *BRRegionHttpGet(NSString *url) {
 
 // ★ 分区结果缓存：同一个分区 120 秒内不重复取数。
 //   否则每次首页刷新都要重做几个同步请求，把首页卡死。
-static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v":数组}
+    // 注意：gBRRegionCache 已提升到檔案級（供並行預取共用），這裡不再宣告
     NSMutableArray *out = [NSMutableArray array];
     @try {
         // ★ 先查缓存
@@ -1650,6 +1759,26 @@ static NSString *BRStripEm(NSString *s) {
                 BRINFO(@"[改写] oldhome 卡片键名样本: %@（共 %lu 张卡片）",
                        [[[cards objectAtIndex:0] allKeys] componentsJoinedByString:@","],
                        (unsigned long)[cards count]);
+            }
+            // [BRPREFETCH] 先並行預取所有需要的分區榜單 —— 迴圈接著全部命中快取，
+            //   把原本循序 52 秒的首頁填充降到約 10 秒。
+            {
+                NSMutableArray *prefetchRids = [NSMutableArray array];
+                for (NSUInteger pi = 0; pi < [cards count]; pi++) {
+                    id pc = [cards objectAtIndex:pi];
+                    if (![pc isKindOfClass:[NSDictionary class]]) continue;
+                    NSString *pr = nil;
+                    for (NSString *pk in @[@"param", @"rid", @"tid"]) {
+                        id pv = [pc objectForKey:pk];
+                        if (pv == nil) continue;
+                        NSString *ps = [NSString stringWithFormat:@"%@", pv];
+                        if ([ps length] && [ps intValue] > 0) { pr = ps; break; }
+                    }
+                    if (pr != nil && ![prefetchRids containsObject:pr]) {
+                        [prefetchRids addObject:pr];
+                    }
+                }
+                BRPrefetchRegionRank(prefetchRids);
             }
             for (NSUInteger ci = 0; ci < [cards count]; ci++) {
                 // [BRBUDGET] 逾預算就停手，避免整頁被看門狗殺
