@@ -370,6 +370,32 @@ static NSString *BREnhanceLoginQuery(NSString *path, NSString *query, NSString *
 
 static NSURLRequest *BRRewriteRequestEx(NSURLRequest *req, BRRoute **outRoute) {
     if (outRoute) *outRoute = nil;
+
+    // [BRINTERNAL_SKIP] ★★ 內部請求（BRRegionHttpGet 發出的）**不可改寫**。
+    //   真機日誌決定性證據：
+    //       改写: 进入 host=api.bilibili.com path=/x/web-interface/ranking/region
+    //       /x/web-interface/ranking/region -> .../x/web-interface/ranking?rid=1&day=3
+    //       oldhome 并行预取：15 个分区，命中 0 个
+    //       oldhome 填充完成：17 张卡片 / 填入 0 张
+    //   內部請求已指定確切上游網址；再被路由規則改寫就會被導到**別的介面**
+    //   （ranking/region 的 data 是陣列，被改成 ranking 後 data 變成字典）→
+    //   預取永遠命中 0、分區卡片一張都填不了，而且每次改寫都走完整轉換
+    //   （含 wbi 簽名）→ 單次耗時 10 分鐘 → 55 秒預算直接爆掉。
+    //
+    //   BRRegionHttpGet 其實有打 kBRInternalKey（@"BRInternalMarker"），
+    //   但**只有已停用的 BRURLProtocol 在檢查它**（protoCls 自 Alpha9.1 起固定 Nil），
+    //   所以等於沒有人檢查。這裡補上。
+    @try {
+        Class np = NSClassFromString(@"NSURLProtocol");
+        if (np != Nil) {
+            id flag = [np propertyForKey:@"BRInternalMarker" inRequest:req];
+            if (flag != nil && [flag boolValue]) {
+                BRDIAG(@"改写: 内部请求，原样放行 %@", [[req URL] path]);
+                return req;
+            }
+        }
+    } @catch (NSException *e) { }
+
     BRLockInit();
     [gBRRewriteLock lock];
     @try {
