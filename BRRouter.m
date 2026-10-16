@@ -1149,12 +1149,27 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
     }
 
     // ================= 直播 =================
-    if ([host hasPrefix:@"api.live.bilibili."] || [path hasPrefix:@"/xlive"]) {
-        // 直播是 APP 签名体系，不要套 wbi
-        r.url = [NSString stringWithFormat:@"https://%@%@?%@", host, path, rawQuery];
-        r.kind = @"raw";
-        r.note = @"直播";
-        return r;
+    // [BRREACHABLE_LIVE] ★ 通用直播分支必須**排除「直播列表」那幾個路徑**，
+    //   否則它會先把請求攔走（kind=raw），下面專門做 livelistx 轉換的分支
+    //   就永遠到不了 —— 這正是「全部直播」顯示
+    //   `[self.response arrayValue] return nil` 的原因（App 要陣列卻拿到未轉換的 dict）。
+    //   這是本專案第三次遇到「到不了的分支」（前兩次：熱門焦點卡、正在直播卡）。
+    {
+        BOOL isLiveListPath =
+            [path isEqualToString:@"/mobile/rooms"] ||
+            [path isEqualToString:@"/room/v1/room/getList"] ||
+            [path isEqualToString:@"/index/getRoomList"] ||
+            [path isEqualToString:@"/index/getList"] ||
+            [path isEqualToString:@"/x/v2/index/getList"] ||
+            [path hasPrefix:@"/AppNewIndex"];
+        if (!isLiveListPath &&
+            ([host hasPrefix:@"api.live.bilibili."] || [path hasPrefix:@"/xlive"])) {
+            // 直播是 APP 签名体系，不要套 wbi
+            r.url = [NSString stringWithFormat:@"https://%@%@?%@", host, path, rawQuery];
+            r.kind = @"raw";
+            r.note = @"直播";
+            return r;
+        }
     }
 
     // ================= nav（登录态注入）=================
