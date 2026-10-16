@@ -1468,12 +1468,27 @@ static NSString *BRStripEm(NSString *s) {
             }
             NSMutableArray *cards = [NSMutableArray arrayWithArray:dataArr];
             NSUInteger filled = 0;
+            // [BRBUDGET] 时间预算护栏。
+            //   首页填充跑在同步路径上（hook 的是 sendSynchronousRequest），
+            //   卡太久会被 iOS 看门狗当成死锁杀掉（0x8badf00d）。
+            //   实测：14 张卡 52 秒；本版改成三级数据源后，条目不足的分区
+            //   还要多发一次 newlist，最坏约 19 个请求 × 3 秒 = 57 秒。
+            //   超过预算就停止续填 —— 剩下的卡片保持原样，
+            //   保证首页一定画得出来（宁可少填几张，也不要整页被杀）。
+            NSTimeInterval brFillStart = [[NSDate date] timeIntervalSince1970];
+            const NSTimeInterval BR_FILL_BUDGET = 55.0;
             if ([cards count] > 0 && [[cards objectAtIndex:0] isKindOfClass:[NSDictionary class]]) {
                 BRINFO(@"[改写] oldhome 卡片键名样本: %@（共 %lu 张卡片）",
                        [[[cards objectAtIndex:0] allKeys] componentsJoinedByString:@","],
                        (unsigned long)[cards count]);
             }
             for (NSUInteger ci = 0; ci < [cards count]; ci++) {
+                // [BRBUDGET] 逾預算就停手，避免整頁被看門狗殺
+                if ([[NSDate date] timeIntervalSince1970] - brFillStart > BR_FILL_BUDGET) {
+                    BRINFO(@"[改写] oldhome 填充已达 %.0f 秒预算，停止续填（已填 %lu 张，剩余保持原样）",
+                           BR_FILL_BUDGET, (unsigned long)filled);
+                    break;
+                }
                 id c = [cards objectAtIndex:ci];
                 if (![c isKindOfClass:[NSDictionary class]]) continue;
                 NSMutableDictionary *card = [NSMutableDictionary dictionaryWithDictionary:c];
