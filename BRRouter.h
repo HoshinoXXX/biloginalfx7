@@ -45,6 +45,14 @@ BOOL  BRRespWasGzip(void);
 #ifdef __cplusplus
 }
 #endif
+// [BRSTAT3] 把一条视频映射成 App 分区卡片期望的 6 字段
+//   （title/cover/param/play/danmaku/finish，型别与 home_init/config 一致）。
+//   play/danmaku 显式传入（ranking/region 的 play/video_review）；
+//   传 nil 则从 stat.view / stat.danmaku 取（popular）。seen 用于跨源去重。
++ (NSDictionary *)brRegionElement:(NSDictionary *)it
+                        playValue:(id)play
+                     danmakuValue:(id)dm
+                             seen:(NSMutableSet *)seen;
 + (NSNumber *)fakeCid:(id)cid forAid:(id)aid;
 // 递归把 protocol-relative 的图片地址补上 http: 前缀
 + (id)fixImages:(id)obj;

@@ -171,6 +171,56 @@ static NSData *BRRegionHttpGet(NSString *url) {
 }
 
 // 取某分区的若干条视频，并转成老客户端能吃的条目
+// [BRSTAT3_IMPL] 统一映射：一条视频 → App 分区卡片期望的 6 字段。
+//   型别必须与 App 自带 home_init/config 完全一致
+//   （play/danmaku/finish 是数字，其余是字符串），否则老客户端渲染会崩。
++ (NSDictionary *)brRegionElement:(NSDictionary *)it
+                        playValue:(id)play
+                     danmakuValue:(id)dm
+                             seen:(NSMutableSet *)seen {
+    @try {
+        id aidRaw = [it objectForKey:@"aid"];
+        if (aidRaw == nil) aidRaw = [it objectForKey:@"id"];
+        long long aidLL = 0;
+        if ([aidRaw respondsToSelector:@selector(longLongValue)]) aidLL = [aidRaw longLongValue];
+        else if ([aidRaw isKindOfClass:[NSString class]]) aidLL = [(NSString *)aidRaw longLongValue];
+        if (aidLL <= 0) return nil;
+        long long fake = [BRStore fakeAidForReal:aidLL];
+        if (fake <= 0) return nil;
+        NSString *key = [NSString stringWithFormat:@"%lld", fake];
+        if (seen != nil) {
+            if ([seen containsObject:key]) return nil;   // 跨数据源去重
+            [seen addObject:key];
+        }
+        NSString *pic = BRPicFix([it objectForKey:@"pic"] ?: [it objectForKey:@"cover"] ?: @"");
+        if ([pic length] > 0
+            && [pic rangeOfString:@"_320x200"].location == NSNotFound
+            && [pic rangeOfString:@"hdslb.com"].location != NSNotFound) {
+            pic = [pic stringByAppendingString:@"_320x200.jpg"];
+        }
+        NSDictionary *st = [it objectForKey:@"stat"];
+        if (![st isKindOfClass:[NSDictionary class]]) st = @{};
+        id playV = play;
+        if (playV == nil || ![playV respondsToSelector:@selector(integerValue)]) {
+            playV = [st objectForKey:@"view"] ?: @0;
+        }
+        id dmV = dm;
+        if (dmV == nil || ![dmV respondsToSelector:@selector(integerValue)]) {
+            dmV = [st objectForKey:@"danmaku"] ?: @0;
+        }
+        return @{
+            @"title":   [it objectForKey:@"title"] ?: @"",
+            @"cover":   pic,
+            @"param":   key,
+            @"play":    playV,
+            @"danmaku": dmV,
+            @"finish":  @0,
+        };
+    } @catch (NSException *e) {
+        return nil;
+    }
+}
+
 + (NSArray *)fetchRegionVideos:(NSString *)rid count:(NSUInteger)want {
 
 // ★ 分区结果缓存：同一个分区 120 秒内不重复取数。
@@ -195,48 +245,99 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
             }
         } @catch (NSException *e) { }
 
-        // ★ 一级分区用经典 newlist（自检实测返回 archives[] 正常）。
-        //   注意：UWP 的 dynamic/child 是【二级】分区用的，层级不同，别混用。
-        NSString *url = [NSString stringWithFormat:
-            @"https://api.bilibili.com/x/web-interface/newlist"
-            @"?rid=%@&pn=1&ps=%lu&order=0&build=4070&mobi_app=iphone"
-            @"&platform=ios&device=phone&appkey=27eb53fc9058f8c3&ts=%lld",
-            rid, (unsigned long)want,
-            (long long)[[NSDate date] timeIntervalSince1970]];
-        NSData *d = BRRegionHttpGet(url);
-        if (d == nil || [d length] < 20) return out;
-        // ★★★ 统一框架：不再手写一遍字段映射，
-        //   而是把 newlist 的原始响应**直接交给 feed 转换器**处理，
-        //   于是 aid/cid 虚拟化、stat 取值、uri 构造全部走同一份代码
-        //   （用户建议：「不能用一個框架嗎，變量用不同的」）。
-        BRRoute *tmp = [[BRRoute alloc] init];
-        tmp.kind = @"newlistx";          // [BRNEWLISTX] 专用转换器（不是 feed！）
-        tmp.note = @"分区(newlistx 专用转换)";
-        NSData *conv = nil;
-        // ★ 防递归用 route 上的标记（而不是全局变量）：
-        //   convertResponse:forRoute: 本来就接收 route，天然按调用隔离，
-        //   嵌套调用不会互相干扰 —— 这修掉了上一版的栈溢出崩溃。
-        tmp.extra = @{@"nopartition": @YES};
-        conv = [BRRouter convertResponse:d forRoute:tmp];
-        if (conv == nil) conv = d;
-        NSDictionary *cj = [BRRouter jsonFromData:conv];
-        // [BRNEWLISTX] newlistx 的输出是 data.archives（不是 data[0].body）
-        NSArray *items = nil;
-        id cdd = [cj objectForKey:@"data"];
-        if ([cdd isKindOfClass:[NSDictionary class]]) {
-            id ar = [cdd objectForKey:@"archives"];
-            if ([ar isKindOfClass:[NSArray class]]) items = ar;
+        // ★★★ [BRSTAT3] 三级数据源 —— 目标：分区卡片显示真实播放量/弹幕。
+        //   背景（2026-10-16 实测）：newlist 的 stat 现在**全是 0**，
+        //     B 站已不再返回真实数字 —— 这正是卡片显示「播放量 -、弹幕 0」的原因。
+        //   实测：ranking/region 在 16/16 个分区都成功且带真实 play/video_review；
+        //         ranking/v2 有 11/16 回 -352 风控，**不能用**。
+        //   ① ranking/region  主数据源
+        //   ② newlist         条目不足时补齐（stat 会是 0）
+        //   ③ popular         分区已废弃时兜底（如「广告区」rid=165 全接口 0 条）
+        NSMutableSet *seen = [NSMutableSet set];
+
+        // ---------- ① ranking/region ----------
+        @try {
+            NSString *u1 = [NSString stringWithFormat:
+                @"https://api.bilibili.com/x/web-interface/ranking/region?rid=%@&day=3", rid];
+            NSData *d1 = BRRegionHttpGet(u1);
+            NSDictionary *j1 = d1 ? [BRRouter jsonFromData:d1] : nil;
+            id l1 = [j1 objectForKey:@"data"];
+            if ([l1 isKindOfClass:[NSArray class]]) {
+                for (id one in l1) {
+                    if ([out count] >= want) break;
+                    if (![one isKindOfClass:[NSDictionary class]]) continue;
+                    NSDictionary *e = [BRRouter brRegionElement:one
+                                                      playValue:[one objectForKey:@"play"]
+                                                   danmakuValue:[one objectForKey:@"video_review"]
+                                                           seen:seen];
+                    if (e != nil) [out addObject:e];
+                }
+            }
+            BRDBG(@"[改写] 分区 %@ ①rank 源得到 %lu 条", rid, (unsigned long)[out count]);
+        } @catch (NSException *e) {
+            BRERR(@"[改写] 分区 %@ rank 源异常: %@", rid, [e description]);
         }
-        if (items == nil) {
-            id ar2 = [cj objectForKey:@"archives"];
-            if ([ar2 isKindOfClass:[NSArray class]]) items = ar2;
+
+        // ---------- ② newlist 补足 ----------
+        if ([out count] < want) {
+            @try {
+                NSString *u2 = [NSString stringWithFormat:
+                    @"https://api.bilibili.com/x/web-interface/newlist"
+                    @"?rid=%@&pn=1&ps=%lu&order=0&build=4070&mobi_app=iphone"
+                    @"&platform=ios&device=phone&appkey=27eb53fc9058f8c3&ts=%lld",
+                    rid, (unsigned long)want,
+                    (long long)[[NSDate date] timeIntervalSince1970]];
+                NSData *d2 = BRRegionHttpGet(u2);
+                NSDictionary *j2 = d2 ? [BRRouter jsonFromData:d2] : nil;
+                id dd = [j2 objectForKey:@"data"];
+                NSArray *ar = nil;
+                if ([dd isKindOfClass:[NSDictionary class]]) {
+                    id a1 = [dd objectForKey:@"archives"];
+                    if ([a1 isKindOfClass:[NSArray class]]) ar = a1;
+                }
+                for (id one in ar) {
+                    if ([out count] >= want) break;
+                    if (![one isKindOfClass:[NSDictionary class]]) continue;
+                    NSDictionary *e = [BRRouter brRegionElement:one
+                                                      playValue:[one objectForKey:@"play"]
+                                                   danmakuValue:[one objectForKey:@"video_review"]
+                                                           seen:seen];
+                    if (e != nil) [out addObject:e];
+                }
+                BRDBG(@"[改写] 分区 %@ ②补 newlist 后共 %lu 条", rid, (unsigned long)[out count]);
+            } @catch (NSException *e) {
+                BRERR(@"[改写] 分区 %@ newlist 异常: %@", rid, [e description]);
+            }
         }
-        for (id one in items) {
-            if (![one isKindOfClass:[NSDictionary class]]) continue;
-            if ([out count] >= want) break;
-            [out addObject:one];
+
+        // ---------- ③ popular 兜底（分区已废弃） ----------
+        if ([out count] == 0) {
+            @try {
+                NSString *u3 = @"https://api.bilibili.com/x/web-interface/popular?pn=1&ps=8";
+                NSData *d3 = BRRegionHttpGet(u3);
+                NSDictionary *j3 = d3 ? [BRRouter jsonFromData:d3] : nil;
+                id dd3 = [j3 objectForKey:@"data"];
+                NSArray *l3 = nil;
+                if ([dd3 isKindOfClass:[NSDictionary class]]) {
+                    id a3 = [dd3 objectForKey:@"list"];
+                    if ([a3 isKindOfClass:[NSArray class]]) l3 = a3;
+                }
+                for (id one in l3) {
+                    if ([out count] >= want) break;
+                    if (![one isKindOfClass:[NSDictionary class]]) continue;
+                    NSDictionary *e = [BRRouter brRegionElement:one
+                                                      playValue:nil
+                                                   danmakuValue:nil
+                                                           seen:seen];
+                    if (e != nil) [out addObject:e];
+                }
+                BRINFO(@"[改写] 分区 %@ ③popular 兜底得到 %lu 条", rid,
+                       (unsigned long)[out count]);
+            } @catch (NSException *e) {
+                BRERR(@"[改写] 分区 %@ popular 兜底异常: %@", rid, [e description]);
+            }
         }
-        BRINFO(@"[改写] 分区 %@ 取到 %lu 条（want=%lu）", rid,
+        BRINFO(@"[改写] 分区 %@ 最终 %lu 条（want=%lu）", rid,
                (unsigned long)[out count], (unsigned long)want);
 
         // ★ 写缓存
