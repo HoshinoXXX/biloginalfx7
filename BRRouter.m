@@ -2058,10 +2058,11 @@ static NSString *BRStripEm(NSString *s) {
                        [[card allKeys] componentsJoinedByString:@","]);
 
                 if (usable > 0) continue;      // 真有数据 → 保留原样
-                if (rid == nil) {              // 没有 rid 就不是分区卡
-                    BRDBG(@"[改写] oldhome 卡片%lu 跳过（无 rid）", (unsigned long)ci);
-                    continue;
-                }
+                // [BRBRANCHORDER] ★ 注意順序：
+                //   「有沒有 rid」不可以放在下面三個型別分支之前 ——
+                //   recommend 與 live 卡的 param 是空的（rid == nil），
+                //   若先判 rid 就會 continue，那兩個分支永遠到不了（實際踩過）。
+                //   正確順序：usable → recommend → live → bangumi → rid → region。
 
                 // [BRRECCARD] 「热门焦点」卡（type=recommend，param=''）
                 //   這是首頁第一張卡，param 是空的 → 原本被 rid 判斷跳過，從未被填。
@@ -2114,6 +2115,12 @@ static NSString *BRStripEm(NSString *s) {
                     } else {
                         BRDBG(@"[改写] oldhome 番剧推荐卡取不到内容，保持原样");
                     }
+                    continue;
+                }
+
+                // [BRBRANCHORDER] 到這裡才檢查 rid —— 不是分區卡就跳過
+                if (rid == nil) {
+                    BRDBG(@"[改写] oldhome 卡片%lu 跳过（无 rid，非分区卡）", (unsigned long)ci);
                     continue;
                 }
 
