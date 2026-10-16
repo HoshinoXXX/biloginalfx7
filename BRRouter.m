@@ -1043,8 +1043,14 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         [path isEqualToString:@"/pgc/player/web/playurl"] ||
         [path isEqualToString:@"/player/playurl"]) {
         NSString *ep = qs[@"ep_id"], *cid = qs[@"cid"], *avid = qs[@"avid"] ?: qs[@"aid"];
+        // [BRPGCWEB] 2026-10-16 審計實測：pgc/player/api/playurl 已回
+        //   {"code":-400,"message":"请求错误"}，而 pgc/player/web/playurl
+        //   回 {"code":0,"result":{...,"durl":[...]}} 正常。
+        //   插件原本寫死 api 版 → 番劇完全播不出來。
+        //   注意可用介面的載荷在 result（不是 data）；App 原本打的也是 pgc 系
+        //   （result 風格），所以直接換上游、原樣透傳即可。
         NSMutableString *u = [NSMutableString stringWithString:
-                              @"https://api.bilibili.com/pgc/player/api/playurl?"];
+                              @"https://api.bilibili.com/pgc/player/web/playurl?"];
         if ([ep length])   [u appendFormat:@"ep_id=%@&", ep];
         if ([cid length])  [u appendFormat:@"cid=%@&", cid];
         if ([avid length]) [u appendFormat:@"avid=%@&", avid];
