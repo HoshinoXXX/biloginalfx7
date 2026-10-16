@@ -66,7 +66,7 @@ static NSString *BRFmtDuration(id d) {
 static BOOL BRConvOff(NSString *kind) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([fm fileExistsAtPath:@"/tmp/br-noconv"]) return YES;
-    if ([kind length]) {
+    if ([route.kind length]) {
         NSString *p = [NSString stringWithFormat:@"/tmp/br-noconv-%@", kind];
         if ([fm fileExistsAtPath:p]) return YES;
     }
@@ -1333,7 +1333,7 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ================= [BRLIVEX] 直播清單轉換 =================
-    if ([kind isEqualToString:@"livelistx"]) {
+    if ([route.kind isEqualToString:@"livelistx"]) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nolive"]) {
             BRINFO(@"[改写] 直播转换已被 /tmp/br-nolive 关闭");
             return body;
@@ -1398,7 +1398,7 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ================= [BRLIVEX] 番剧时间表转换 =================
-    if ([kind isEqualToString:@"bangumitlx"]) {
+    if ([route.kind isEqualToString:@"bangumitlx"]) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nobangumi"]) {
             BRINFO(@"[改写] 番剧转换已被 /tmp/br-nobangumi 关闭");
             return body;
@@ -1418,7 +1418,7 @@ static NSString *BRStripEm(NSString *s) {
     }
 
     // ================= [BRLIVEX] 番剧首页拼装 =================
-    if ([kind isEqualToString:@"bangumihome"]) {
+    if ([route.kind isEqualToString:@"bangumihome"]) {
         if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nobangumi"]) {
             BRINFO(@"[改写] 番剧转换已被 /tmp/br-nobangumi 关闭");
             return body;
