@@ -554,6 +554,58 @@ static NSData *BRRegionHttpGet(NSString *url) {
     }
 }
 
+
+// =====================================================================
+// [BRBANGUMICARD] 「番劇推薦」卡片的元素
+//   形狀取自 App 自帶 home_init/config 的該卡（type=bangumi, param=13）：
+//     { title, cover, param(season_id), finish, index, mtime, status }
+//   注意：這裡的 param 是 **season_id**（config 樣本 '5538'），不是 aid。
+//   上游 pgc/season/index/result 直接提供 6 個裡的 5 個；
+//   mtime 介面沒有 → 留空字串。
+//   /tmp/br-nobangumicard 可關閉（回到原本的 region 形狀）。
+// =====================================================================
+static NSArray *BRBangumiCardItems(NSUInteger want) {
+    NSMutableArray *out = [NSMutableArray array];
+    @try {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nobangumicard"]) {
+            BRDBG(@"[改写] 番剧推荐卡已被 /tmp/br-nobangumicard 关闭");
+            return out;
+        }
+        NSString *u = [NSString stringWithFormat:
+            @"https://api.bilibili.com/pgc/season/index/result"
+            @"?st=1&order=3&season_type=1&page=1&pagesize=%lu&type=1",
+            (unsigned long)want];
+        NSData *dt = BRRegionHttpGet(u);
+        if (dt == nil) return out;
+        NSDictionary *j = [BRRouter jsonFromData:dt];
+        id dd = [j objectForKey:@"data"];
+        id list = [dd isKindOfClass:[NSDictionary class]] ? [dd objectForKey:@"list"] : nil;
+        if (![list isKindOfClass:[NSArray class]]) return out;
+        for (id one in (NSArray *)list) {
+            if ([out count] >= want) break;
+            if (![one isKindOfClass:[NSDictionary class]]) continue;
+            id sid = [one objectForKey:@"season_id"];
+            if (sid == nil || [sid longLongValue] <= 0) continue;
+            NSString *cover = [one objectForKey:@"cover"] ?: @"";
+            if ([cover hasPrefix:@"//"]) cover = [@"http:" stringByAppendingString:cover];
+            [out addObject:@{
+                @"title":  [one objectForKey:@"title"] ?: @"",
+                @"cover":  cover,
+                // ★ param = season_id（字串）—— config 樣本 '5538' 就是這個
+                @"param":  [NSString stringWithFormat:@"%@", sid],
+                @"finish": ([one objectForKey:@"is_finish"] ?: @0),
+                @"index":  ([one objectForKey:@"index_show"] ?: @""),
+                @"mtime":  @"",
+                @"status": ([one objectForKey:@"season_status"] ?: @0),
+            }];
+        }
+        BRINFO(@"[改写] 番剧推荐卡：组出 %lu 个番剧", (unsigned long)[out count]);
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 番剧推荐卡异常: %@", [e description]);
+    }
+    return out;
+}
+
 + (NSArray *)fetchRegionVideos:(NSString *)rid count:(NSUInteger)want {
 
 // ★ 分区结果缓存：同一个分区 120 秒内不重复取数。
@@ -1863,6 +1915,25 @@ static NSString *BRStripEm(NSString *s) {
                 if (usable > 0) continue;      // 真有数据 → 保留原样
                 if (rid == nil) {              // 没有 rid 就不是分区卡
                     BRDBG(@"[改写] oldhome 卡片%lu 跳过（无 rid）", (unsigned long)ci);
+                    continue;
+                }
+
+                // [BRBANGUMICARD] 「番劇推薦」卡（type=bangumi）要的是**番劇**形狀
+                //   { title, cover, param(season_id), finish, index, mtime, status }，
+                //   不是 region 形狀。config 的樣本 param='5538' 就是 season_id。
+                if ([[card objectForKey:@"type"] isKindOfClass:[NSString class]] &&
+                    [[card objectForKey:@"type"] isEqualToString:@"bangumi"]) {
+                    NSArray *bs = BRBangumiCardItems(4);
+                    if ([bs count] > 0) {
+                        NSString *bk2 = bodyKey ?: @"body";
+                        [card setObject:bs forKey:bk2];
+                        [cards replaceObjectAtIndex:ci withObject:card];
+                        filled++;
+                        BRINFO(@"[改写] oldhome 已填番剧推荐卡（rid=%@）%lu 条", rid,
+                               (unsigned long)[bs count]);
+                    } else {
+                        BRDBG(@"[改写] oldhome 番剧推荐卡取不到内容，保持原样");
+                    }
                     continue;
                 }
 
