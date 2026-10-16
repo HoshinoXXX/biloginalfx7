@@ -867,14 +867,19 @@ static void br_hook_login_vcs(void) {
 
         // ④ 注册 NSURLProtocol
         @try {
-            Class protoCls = Nil;   // ★ Alpha9.1：NSURLProtocol 层暂时关闭（运行时建类会导致 App 崩溃）
+            // [BRPROTOMSG] ★ 這一層自 Alpha9.1 起**刻意停用**（protoCls 固定為 Nil）：
+            //   執行期用 objc_allocateClassPair 建類會讓 App 崩潰。
+            //   攔截改由下面「NSURLConnection 4 個入口」負責 —— 那條路徑在真機上驗證過會掛載。
+            Class protoCls = Nil;
             if (protoCls != Nil) {
                 Class protoBase = NSClassFromString(@"NSURLProtocol");   // ★ 运行时取类，避免符号引用
                 if (protoBase != Nil) [protoBase registerClass:protoCls];
                 BRMark("05 BRURLProtocol 已注册");
                 BRINFO(@"已注册 BRURLProtocol");
             } else {
-                BRMark("05 BRURLProtocol 类不存在");
+                // [BRPROTOMSG] 說實話 —— 這一層是**刻意停用**，不是「不存在」。
+                //   原本的訊息讓我（在真機驗證時）花了時間去查一個不存在的問題。
+                BRMark("05 BRURLProtocol 停用（Alpha9.1 起：运行时建类会崩，改由 NSURLConnection hook 拦截）");
             }
         } @catch (NSException *e) {
             BRMark("05 registerClass 抛异常");
