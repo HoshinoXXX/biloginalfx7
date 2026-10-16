@@ -208,9 +208,17 @@ static void BRPrefetchRegionRank(NSArray *rids) {
                         id lst = [j objectForKey:@"data"];
                         if ([lst isKindOfClass:[NSArray class]] &&
                             [(NSArray *)lst count] > 0) {
+                            // [BRPREFETCH_CAP] 上限必須與 fetchRegionVideos 的
+                            //   `if ([out count] >= want) break;` 一致（want=4）。
+                            //   否則：① 快取內容不一致（卡片會拿到 11 筆而非 4 筆）
+                            //         ② brRegionElement 會呼叫 BRStore
+                            //            fakeAidForReal:，而它在鎖內每次分配都
+                            //            BRSaveMap() 寫檔 → 165 次磁碟寫入（原本 60 次）
+                            const NSUInteger BRP_WANT = 4;
                             NSMutableArray *out = [NSMutableArray array];
                             NSMutableSet *seen = [NSMutableSet set];
                             for (id one in (NSArray *)lst) {
+                                if ([out count] >= BRP_WANT) break;
                                 if (![one isKindOfClass:[NSDictionary class]]) continue;
                                 NSDictionary *e =
                                     [BRRouter brRegionElement:one
