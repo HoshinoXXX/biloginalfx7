@@ -254,6 +254,7 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         //   ② newlist         条目不足时补齐（stat 会是 0）
         //   ③ popular         分区已废弃时兜底（如「广告区」rid=165 全接口 0 条）
         NSMutableSet *seen = [NSMutableSet set];
+        BOOL rankOk = NO;      // [BRPERF] rank 源是否真的拿到資料
 
         // ---------- ① ranking/region ----------
         @try {
@@ -262,6 +263,7 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
             NSData *d1 = BRRegionHttpGet(u1);
             NSDictionary *j1 = d1 ? [BRRouter jsonFromData:d1] : nil;
             id l1 = [j1 objectForKey:@"data"];
+            if ([l1 isKindOfClass:[NSArray class]] && [(NSArray *)l1 count] > 0) rankOk = YES;
             if ([l1 isKindOfClass:[NSArray class]]) {
                 for (id one in l1) {
                     if ([out count] >= want) break;
@@ -279,7 +281,10 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         }
 
         // ---------- ② newlist 补足 ----------
-        if ([out count] < want) {
+        //   [BRPERF] 只在 rank 源「成功但條數不足」時才補。
+        //   若 rank 直接失敗（分區已廢棄，例如 rid=165 回 -400），
+        //   newlist 幾乎必然也是空的 → 直接跳去 popular，省一次往返。
+        if (rankOk && [out count] < want) {
             @try {
                 NSString *u2 = [NSString stringWithFormat:
                     @"https://api.bilibili.com/x/web-interface/newlist"
@@ -311,25 +316,63 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         }
 
         // ---------- ③ popular 兜底（分区已废弃） ----------
+        //   [BRPERF] 结果在分区之间共享缓存 120 秒：
+        //   多个失效分区不会各发一次 popular。
         if ([out count] == 0) {
             @try {
-                NSString *u3 = @"https://api.bilibili.com/x/web-interface/popular?pn=1&ps=8";
-                NSData *d3 = BRRegionHttpGet(u3);
-                NSDictionary *j3 = d3 ? [BRRouter jsonFromData:d3] : nil;
-                id dd3 = [j3 objectForKey:@"data"];
-                NSArray *l3 = nil;
-                if ([dd3 isKindOfClass:[NSDictionary class]]) {
-                    id a3 = [dd3 objectForKey:@"list"];
-                    if ([a3 isKindOfClass:[NSArray class]]) l3 = a3;
+                NSArray *pop = nil;
+                @try {
+                    NSDictionary *pc = [gBRRegionCache objectForKey:@"__popular__"];
+                    if (pc != nil) {
+                        NSTimeInterval page = [[NSDate date] timeIntervalSince1970] -
+                                              [[pc objectForKey:@"t"] doubleValue];
+                        if (page < 120.0) {
+                            id pv = [pc objectForKey:@"v"];
+                            if ([pv isKindOfClass:[NSArray class]] && [pv count] > 0) {
+                                pop = pv;
+                                BRDBG(@"[改写] 分区 %@ popular 命中缓存 %lu 条",
+                                      rid, (unsigned long)[pop count]);
+                            }
+                        }
+                    }
+                } @catch (NSException *e) { }
+
+                if (pop == nil) {
+                    NSString *u3 = @"https://api.bilibili.com/x/web-interface/popular?pn=1&ps=8";
+                    NSData *d3 = BRRegionHttpGet(u3);
+                    NSDictionary *j3 = d3 ? [BRRouter jsonFromData:d3] : nil;
+                    id dd3 = [j3 objectForKey:@"data"];
+                    NSArray *l3 = nil;
+                    if ([dd3 isKindOfClass:[NSDictionary class]]) {
+                        id a3 = [dd3 objectForKey:@"list"];
+                        if ([a3 isKindOfClass:[NSArray class]]) l3 = a3;
+                    }
+                    NSMutableArray *mp = [NSMutableArray array];
+                    for (id one in l3) {
+                        if (![one isKindOfClass:[NSDictionary class]]) continue;
+                        // 这里用一个临时 seen，避免把缓存内容提前消耗掉
+                        NSDictionary *e = [BRRouter brRegionElement:one
+                                                          playValue:nil
+                                                       danmakuValue:nil
+                                                               seen:nil];
+                        if (e != nil) [mp addObject:e];
+                    }
+                    pop = mp;
+                    if ([pop count] > 0) {
+                        [gBRRegionCache setObject:@{@"t": @([[NSDate date] timeIntervalSince1970]),
+                                                    @"v": pop} forKey:@"__popular__"];
+                    }
                 }
-                for (id one in l3) {
+
+                for (NSDictionary *e in pop) {
                     if ([out count] >= want) break;
-                    if (![one isKindOfClass:[NSDictionary class]]) continue;
-                    NSDictionary *e = [BRRouter brRegionElement:one
-                                                      playValue:nil
-                                                   danmakuValue:nil
-                                                           seen:seen];
-                    if (e != nil) [out addObject:e];
+                    if (![e isKindOfClass:[NSDictionary class]]) continue;
+                    id pk = [e objectForKey:@"param"];
+                    if (pk != nil) {
+                        if ([seen containsObject:pk]) continue;   // 跨源去重
+                        [seen addObject:pk];
+                    }
+                    [out addObject:e];
                 }
                 BRINFO(@"[改写] 分区 %@ ③popular 兜底得到 %lu 条", rid,
                        (unsigned long)[out count]);
