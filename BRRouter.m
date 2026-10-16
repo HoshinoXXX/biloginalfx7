@@ -305,6 +305,18 @@ static NSData *BRRegionHttpGet(NSString *url) {
 + (NSDictionary *)brLiveRoomFromDict:(NSDictionary *)it {
     @try {
         if (![it isKindOfClass:[NSDictionary class]]) return nil;
+        // [BRLIVECOVER] 截圖顯示直播列表的標題與人數都出來了，但封面是灰的。
+        //   先記錄上游到底給了哪些欄位（不同 xlive 介面用不同名字），再決定對映。
+        {
+            static NSMutableSet *gSeen = nil;
+            if (gSeen == nil) gSeen = [[NSMutableSet alloc] init];
+            NSString *sig = [[[it allKeys] sortedArrayUsingSelector:@selector(compare:)]
+                             componentsJoinedByString:@","];
+            if (![gSeen containsObject:sig]) {
+                [gSeen addObject:sig];
+                BRINFO(@"[改写] 直播房间字段样本: %@", sig);
+            }
+        }
         id ridRaw = [it objectForKey:@"roomid"];
         if (ridRaw == nil) ridRaw = [it objectForKey:@"room_id"];
         long long room = 0;
@@ -1248,7 +1260,14 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
         [path isEqualToString:@"/x/web-interface/archive/related"] ||
         [path isEqualToString:@"/x/v2/view/related"]) {
         NSString *aid = qs[@"aid"] ?: qs[@"avid"] ?: @"";
-        long long real = [BRStore realAidForFake:[aid longLongValue]];
+        long long aidIn = [aid longLongValue];
+        long long real = [BRStore realAidForFake:aidIn];
+        // [BRVIEWDIAG] 診斷「點不進去」：記錄進來的 aid 與映射結果。
+        //   真機日誌顯示改寫後的 URL 是 aid=2147483647（= int32 飽和值／App 佔位符），
+        //   但我餵給卡片的 param 是約 10 億的假 aid，照理不該飽和 ——
+        //   所以要先看清楚 App 究竟送了什麼進來，再決定修哪裡。
+        BRINFO(@"[改写] view 请求：进来 aid=%@(%lld) → 映射 real=%lld",
+               aid, aidIn, real);
         if (real > 0) aid = [NSString stringWithFormat:@"%lld", real];
         r.url = [NSString stringWithFormat:
                  @"https://api.bilibili.com/x/web-interface/archive/related?aid=%@", aid];
