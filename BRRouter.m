@@ -171,6 +171,222 @@ static NSData *BRRegionHttpGet(NSString *url) {
 }
 
 // 取某分区的若干条视频，并转成老客户端能吃的条目
+// =====================================================================
+// [BRLIVEX] 直播 / 番劇 回應轉換   [BRLIVEX_FIX2]
+//   來源是 2026-10-16 從 App 二進位抽出的 ObjC ivar 名稱：
+//     BiliLiveList { count, hasNext, livelist[], page, status, totalCount, totalPage }
+//     BiliLiveItem { attention, cover, face, mid, online, room_id, status,
+//                    title, uname, vip, svip, ... }
+//     BBPhoneBangumiHomeModel { banners, categories, finishedBangumis,
+//                               latestUpdate, recommendCategory }
+//     BBPhoneBangumiTimelineModel { ep_id, ep_index, ep_index_ui, dayIndex,
+//                                   follow, is_published, ontime, season_id, ... }
+//   欄位同時輸出 snake_case 與 camelCase 兩種寫法，最大化命中率
+//   （模型 ivar 有 room_id 也有 hasNext 這種駝峰）。
+// =====================================================================
+
++ (NSDictionary *)brLiveRoomFromDict:(NSDictionary *)it {
+    @try {
+        if (![it isKindOfClass:[NSDictionary class]]) return nil;
+        id ridRaw = [it objectForKey:@"roomid"];
+        if (ridRaw == nil) ridRaw = [it objectForKey:@"room_id"];
+        long long room = 0;
+        if ([ridRaw respondsToSelector:@selector(longLongValue)]) room = [ridRaw longLongValue];
+        else if ([ridRaw isKindOfClass:[NSString class]]) room = [(NSString *)ridRaw longLongValue];
+        if (room <= 0) return nil;
+
+        id midRaw = [it objectForKey:@"uid"];
+        if (midRaw == nil) midRaw = [it objectForKey:@"mid"];
+        if (midRaw == nil) midRaw = [it objectForKey:@"up_id"];
+
+        // status 在 recommend_room_list 裡沒有，在 room_list[].list 裡是 bool
+        NSNumber *st = @1;
+        id stRaw = [it objectForKey:@"status"];
+        if (stRaw != nil && [stRaw respondsToSelector:@selector(boolValue)])
+            st = [stRaw boolValue] ? @1 : @0;
+        // 直播中才有 online；online<=0 視為未開播
+        id onlineRaw = [it objectForKey:@"online"];
+        long long online = 0;
+        if ([onlineRaw respondsToSelector:@selector(longLongValue)])
+            online = [onlineRaw longLongValue];
+        if (online <= 0) st = @0;
+
+        NSMutableDictionary *o = [NSMutableDictionary dictionary];
+        [o setObject:@(room) forKey:@"room_id"];
+        [o setObject:@(room) forKey:@"roomid"];
+        [o setObject:([it objectForKey:@"title"] ?: @"") forKey:@"title"];
+        [o setObject:([it objectForKey:@"uname"] ?: @"") forKey:@"uname"];
+        [o setObject:@(online) forKey:@"online"];
+        [o setObject:BRPicFix([it objectForKey:@"cover"] ?: @"") forKey:@"cover"];
+        [o setObject:BRPicFix([it objectForKey:@"face"] ?: @"") forKey:@"face"];
+        if (midRaw != nil) {
+            [o setObject:midRaw forKey:@"mid"];
+            [o setObject:midRaw forKey:@"uid"];
+        }
+        [o setObject:st forKey:@"status"];
+        // 關注狀態（老模型叫 attention，新介面叫 follow_status）
+        id fp = [it objectForKey:@"follow_status"];
+        [o setObject:(fp ?: @0) forKey:@"attention"];
+        [o setObject:(fp ?: @0) forKey:@"follow"];
+        [o setObject:([it objectForKey:@"followers"] ?: @0) forKey:@"fans"];
+        // 分區
+        [o setObject:([it objectForKey:@"area_v2_name"] ?: @"") forKey:@"area"];
+        [o setObject:([it objectForKey:@"area_v2_name"] ?: @"") forKey:@"area_v2_name"];
+        [o setObject:([it objectForKey:@"area_v2_id"] ?: @0) forKey:@"area_id"];
+        [o setObject:([it objectForKey:@"area_v2_id"] ?: @0) forKey:@"area_v2_id"];
+        [o setObject:([it objectForKey:@"area_v2_parent_name"] ?: @"") forKey:@"area_v2_parent_name"];
+        [o setObject:([it objectForKey:@"area_v2_parent_id"] ?: @0) forKey:@"area_v2_parent_id"];
+        [o setObject:BRPicFix([it objectForKey:@"keyframe"] ?: @"") forKey:@"keyframe"];
+        // 老模型有但新介面不提供的，給 0 避免 nil
+        for (NSString *k in @[@"cmt", @"comment", @"create", @"create_at",
+                              @"start", @"start_at", @"sch_id", @"vip", @"svip",
+                              @"watched_show_num"]) {
+            [o setObject:@0 forKey:k];
+        }
+        return o;
+    } @catch (NSException *e) {
+        return nil;
+    }
+}
+
++ (NSDictionary *)brTimelineToOld:(NSDictionary *)j {
+    @try {
+        id res = [j objectForKey:@"result"];
+        if (res == nil) res = [j objectForKey:@"data"];
+        if (![res isKindOfClass:[NSArray class]]) return nil;
+        NSMutableArray *days = [NSMutableArray array];
+        for (id day in res) {
+            if (![day isKindOfClass:[NSDictionary class]]) continue;
+            NSMutableDictionary *d = [NSMutableDictionary dictionary];
+            id date = [day objectForKey:@"date"];
+            id dow  = [day objectForKey:@"day_of_week"];
+            [d setObject:(date ?: @"") forKey:@"date"];
+            [d setObject:(dow ?: @0) forKey:@"day_of_week"];
+            [d setObject:(dow ?: @0) forKey:@"dayIndex"];
+            [d setObject:([day objectForKey:@"is_today"] ?: @0) forKey:@"is_today"];
+            NSMutableArray *eps = [NSMutableArray array];
+            id rawEps = [day objectForKey:@"episodes"];
+            if ([rawEps isKindOfClass:[NSArray class]]) {
+                for (id e in rawEps) {
+                    if (![e isKindOfClass:[NSDictionary class]]) continue;
+                    id epId = [e objectForKey:@"episode_id"];
+                    if (epId == nil) epId = [e objectForKey:@"ep_id"];
+                    // [BRLIVEX_FIX2] 沒有 ep_id 的集數直接跳過 —— 輸出殘缺項會讓
+                    //   App 拿到無法開啟的卡片（實測 50 集裡有 1 集如此）。
+                    long long epLL = 0;
+                    if ([epId respondsToSelector:@selector(longLongValue)])
+                        epLL = [epId longLongValue];
+                    if (epLL <= 0) continue;
+                    id pubIdx = [e objectForKey:@"pub_index"];
+                    id follows = [e objectForKey:@"follows"];
+                    id plays = [e objectForKey:@"plays"];
+                    NSMutableDictionary *x = [NSMutableDictionary dictionary];
+                    [x setObject:(epId ?: @0) forKey:@"ep_id"];
+                    [x setObject:(epId ?: @0) forKey:@"episode_id"];
+                    [x setObject:([e objectForKey:@"season_id"] ?: @0) forKey:@"season_id"];
+                    [x setObject:([e objectForKey:@"title"] ?: @"") forKey:@"title"];
+                    [x setObject:BRPicFix([e objectForKey:@"cover"] ?: @"") forKey:@"cover"];
+                    [x setObject:BRPicFix([e objectForKey:@"square_cover"] ?: @"") forKey:@"square_cover"];
+                    [x setObject:BRPicFix([e objectForKey:@"ep_cover"] ?: @"") forKey:@"ep_cover"];
+                    [x setObject:(pubIdx ?: @"") forKey:@"pub_index"];
+                    [x setObject:(pubIdx ?: @"") forKey:@"ep_index"];
+                    [x setObject:(pubIdx ?: @"") forKey:@"ep_index_ui"];
+                    [x setObject:([e objectForKey:@"pub_time"] ?: @"") forKey:@"pub_time"];
+                    [x setObject:([e objectForKey:@"pub_ts"] ?: @0) forKey:@"pub_ts"];
+                    [x setObject:([e objectForKey:@"published"] ?: @0) forKey:@"published"];
+                    [x setObject:([e objectForKey:@"published"] ?: @0) forKey:@"is_published"];
+                    [x setObject:([e objectForKey:@"delay"] ?: @0) forKey:@"delay"];
+                    [x setObject:([e objectForKey:@"delay_reason"] ?: @"") forKey:@"delay_reason"];
+                    [x setObject:(follows ?: @"-") forKey:@"follow"];
+                    [x setObject:(follows ?: @"-") forKey:@"follows"];
+                    [x setObject:(plays ?: @"-") forKey:@"plays"];
+                    // 只有在「已播」且沒有 delay 時才算準時
+                    id delay = [e objectForKey:@"delay"];
+                    BOOL late = ([delay respondsToSelector:@selector(boolValue)] && [delay boolValue]);
+                    [x setObject:(late ? @0 : @1) forKey:@"ontime"];
+                    [x setObject:(date ?: @"") forKey:@"date"];
+                    // [BRLIVEX_FIX2] dayIndex 也要放在每一集 ——
+                    //   BBPhoneBangumiTimelineModel 是「一集一個 model」，
+                    //   dayIndex 掛在「天」層級的話它拿不到（sim_live.py 抓到）。
+                    [x setObject:(dow ?: @0) forKey:@"dayIndex"];
+                    [x setObject:@"" forKey:@"badge"];
+                    [x setObject:@0 forKey:@"season_status"];
+                    [eps addObject:x];
+                }
+            }
+            [d setObject:eps forKey:@"episodes"];
+            [d setObject:eps forKey:@"listOfDay"];
+            [days addObject:d];
+        }
+        if ([days count] == 0) return nil;
+        return @{ @"code": @0, @"message": @"success",
+                  @"result": days, @"data": days, @"latestUpdate": days };
+    } @catch (NSException *e) {
+        return nil;
+    }
+}
+
++ (NSDictionary *)brBangumiHomeFromTimeline:(NSDictionary *)j
+                                      index:(NSDictionary *)idx {
+    @try {
+        NSDictionary *tl = [BRRouter brTimelineToOld:j];
+        NSArray *days = nil;
+        if (tl != nil) {
+            days = [tl objectForKey:@"result"];
+        }
+        if (![days isKindOfClass:[NSArray class]]) days = @[];
+
+        // finishedBangumis：從 pgc 索引取（帶 is_finish/cover/title/season_id）
+        NSMutableArray *finished = [NSMutableArray array];
+        @try {
+            id dd = [idx objectForKey:@"data"];
+            NSArray *list = nil;
+            if ([dd isKindOfClass:[NSDictionary class]]) {
+                id l = [dd objectForKey:@"list"];
+                if ([l isKindOfClass:[NSArray class]]) list = l;
+            }
+            for (id one in list) {
+                if (![one isKindOfClass:[NSDictionary class]]) continue;
+                NSMutableDictionary *x = [NSMutableDictionary dictionary];
+                [x setObject:([one objectForKey:@"title"] ?: @"") forKey:@"title"];
+                [x setObject:([one objectForKey:@"season_id"] ?: @0) forKey:@"season_id"];
+                [x setObject:([one objectForKey:@"media_id"] ?: @0) forKey:@"media_id"];
+                [x setObject:BRPicFix([one objectForKey:@"cover"] ?: @"") forKey:@"cover"];
+                [x setObject:([one objectForKey:@"index_show"] ?: @"") forKey:@"index_show"];
+                [x setObject:([one objectForKey:@"is_finish"] ?: @0) forKey:@"is_finish"];
+                [x setObject:([one objectForKey:@"badge"] ?: @"") forKey:@"badge"];
+                [x setObject:([one objectForKey:@"score"] ?: @"") forKey:@"score"];
+                [x setObject:([one objectForKey:@"subTitle"] ?: @"") forKey:@"subTitle"];
+                [x setObject:([one objectForKey:@"order"] ?: @"") forKey:@"order"];
+                id fe = [one objectForKey:@"first_ep"];
+                if ([fe isKindOfClass:[NSDictionary class]]) {
+                    [x setObject:([fe objectForKey:@"ep_id"] ?: @0) forKey:@"ep_id"];
+                    [x setObject:BRPicFix([fe objectForKey:@"cover"] ?: @"") forKey:@"ep_cover"];
+                }
+                [finished addObject:x];
+            }
+        } @catch (NSException *e) { }
+
+        NSDictionary *inner = @{
+            @"banners": @[],
+            @"categories": @[],
+            @"finishedBangumis": finished,
+            @"finished_bangumis": finished,
+            @"latestUpdate": days,
+            @"latest_update": days,
+            @"recommendCategory": @[],
+            @"recommend_category": @[],
+        };
+        BRINFO(@"[改写] 番剧首页拼装：latestUpdate %lu 天 / finishedBangumis %lu 部",
+               (unsigned long)[days count], (unsigned long)[finished count]);
+        return @{ @"code": @0, @"message": @"ok",
+                  @"data": inner, @"result": inner };
+    } @catch (NSException *e) {
+        BRERR(@"[改写] 番剧首页拼装失败: %@", [e description]);
+        return nil;
+    }
+}
+
 // [BRSTAT3_IMPL] 统一映射：一条视频 → App 分区卡片期望的 6 字段。
 //   型别必须与 App 自带 home_init/config 完全一致
 //   （play/danmaku/finish 是数字，其余是字符串），否则老客户端渲染会崩。
@@ -773,8 +989,8 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
             r.url = [NSString stringWithFormat:
                      @"https://api.live.bilibili.com/xlive/web-interface/v1/index/getList?%@",
                      [keep componentsJoinedByString:@"&"]];
-            r.kind = @"raw";
-            r.note = @"直播列表（新接口）";
+            r.kind = @"livelistx";   // [BRLIVEX] 需要重包成 BiliLiveList
+            r.note = @"直播列表（新接口，已转换）";
             return r;
         }
         if ([path isEqualToString:@"/api/playurl"]) {
@@ -788,11 +1004,23 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         }
     }
 
+    // ---- [BRLIVEX] 番劇首頁：老介面已關閉（404）----
+    //   App 二進位裡有 BBPhoneBangumiHomeModel { banners, categories,
+    //   finishedBangumis, latestUpdate, recommendCategory }，
+    //   用 timeline + pgc 索引拼出這個結構（不再讓它 404）。
+    if ([path rangeOfString:@"app_index_page"].location != NSNotFound ||
+        [path hasPrefix:@"/api/app_index_page"]) {
+        r.url = @"https://api.bilibili.com/pgc/web/timeline?types=1&before=6&after=6";
+        r.kind = @"bangumihome";
+        r.note = @"番剧首页（拼装）";
+        return r;
+    }
+
     // ---- 番剧时间表 ----
     if ([path hasPrefix:@"/pgc/web/timeline"] || [path hasPrefix:@"/x/v2/bangumi/timeline"]) {
         r.url = @"https://api.bilibili.com/pgc/web/timeline?types=1&before=6&after=6";
-        r.kind = @"raw";
-        r.note = @"番剧时间表";
+        r.kind = @"bangumitlx";   // [BRLIVEX] 需要改成旧字段名
+        r.note = @"番剧时间表（已转换）";
         return r;
     }
 
@@ -1102,6 +1330,120 @@ static NSString *BRStripEm(NSString *s) {
             NSData *vd = [self dataFromJSON:v];
             if (vd != nil) body = vd;
         }
+    }
+
+    // ================= [BRLIVEX] 直播清單轉換 =================
+    if ([kind isEqualToString:@"livelistx"]) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nolive"]) {
+            BRINFO(@"[改写] 直播转换已被 /tmp/br-nolive 关闭");
+            return body;
+        }
+        @try {
+            NSDictionary *j = [self jsonFromData:body];
+            NSDictionary *dd = [j objectForKey:@"data"];
+            if (![dd isKindOfClass:[NSDictionary class]]) {
+                BRINFO(@"[改写] 直播回应没有 data 字典，原样返回");
+                return body;
+            }
+            // 先收 room_list[].list（字段最全），再补 recommend_room_list
+            NSMutableArray *raw = [NSMutableArray array];
+            id rl = [dd objectForKey:@"room_list"];
+            if ([rl isKindOfClass:[NSArray class]]) {
+                for (id mod in rl) {
+                    if (![mod isKindOfClass:[NSDictionary class]]) continue;
+                    id inner = [mod objectForKey:@"list"];
+                    if ([inner isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:inner];
+                }
+            }
+            id rec = [dd objectForKey:@"recommend_room_list"];
+            if ([rec isKindOfClass:[NSArray class]]) [raw addObjectsFromArray:rec];
+
+            NSMutableArray *rooms = [NSMutableArray array];
+            NSMutableSet *seen = [NSMutableSet set];
+            for (id it in raw) {
+                if (![it isKindOfClass:[NSDictionary class]]) continue;
+                // 跳過廣告位
+                id isAd = [it objectForKey:@"is_ad"];
+                if (isAd != nil && [isAd respondsToSelector:@selector(boolValue)] && [isAd boolValue])
+                    continue;
+                NSDictionary *o = [BRRouter brLiveRoomFromDict:it];
+                if (o == nil) continue;
+                NSString *k = [[o objectForKey:@"room_id"] description];
+                if (k == nil || [seen containsObject:k]) continue;
+                [seen addObject:k];
+                [rooms addObject:o];
+            }
+            NSUInteger n = [rooms count];
+            BRINFO(@"[改写] 直播转换：xlive → livelist %lu 间", (unsigned long)n);
+            if (n == 0) {
+                BRINFO(@"[改写] 直播转换得到 0 间，原样返回（避免给 App 空结构）");
+                return body;
+            }
+            NSDictionary *inner = @{
+                @"count": @(n), @"hasNext": @0, @"has_next": @0, @"hasnext": @0,
+                @"livelist": rooms, @"list": rooms, @"rooms": rooms,
+                @"page": @1, @"status": @0,
+                @"totalCount": @(n), @"total_count": @(n),
+                @"totalPage": @1, @"total_page": @1,
+            };
+            NSDictionary *o = @{ @"code": @0, @"message": @"ok",
+                                 @"data": inner, @"result": inner,
+                                 @"livelist": rooms, @"list": rooms };
+            NSData *nd = [self dataFromJSON:[self fixImages:o]];
+            if (nd != nil) return nd;
+        } @catch (NSException *e) {
+            BRERR(@"[改写] 直播转换失败: %@", [e description]);
+        }
+        return body;
+    }
+
+    // ================= [BRLIVEX] 番剧时间表转换 =================
+    if ([kind isEqualToString:@"bangumitlx"]) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nobangumi"]) {
+            BRINFO(@"[改写] 番剧转换已被 /tmp/br-nobangumi 关闭");
+            return body;
+        }
+        @try {
+            NSDictionary *o = [BRRouter brTimelineToOld:[self jsonFromData:body]];
+            if (o == nil) {
+                BRINFO(@"[改写] 番剧时间表转换失败，原样返回");
+                return body;
+            }
+            NSData *nd = [self dataFromJSON:[self fixImages:o]];
+            if (nd != nil) return nd;
+        } @catch (NSException *e) {
+            BRERR(@"[改写] 番剧时间表转换异常: %@", [e description]);
+        }
+        return body;
+    }
+
+    // ================= [BRLIVEX] 番剧首页拼装 =================
+    if ([kind isEqualToString:@"bangumihome"]) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-nobangumi"]) {
+            BRINFO(@"[改写] 番剧转换已被 /tmp/br-nobangumi 关闭");
+            return body;
+        }
+        @try {
+            // body 是 timeline；再抓一次索引拿 finishedBangumis
+            NSDictionary *idx = nil;
+            @try {
+                NSString *iu = @"https://api.bilibili.com/pgc/season/index/result"
+                               @"?st=1&order=3&season_type=1&page=1&pagesize=8&type=1";
+                NSData *id2 = BRRegionHttpGet(iu);
+                if (id2 != nil) idx = [self jsonFromData:id2];
+            } @catch (NSException *e) { }
+            NSDictionary *o = [BRRouter brBangumiHomeFromTimeline:[self jsonFromData:body]
+                                                            index:idx];
+            if (o == nil) {
+                BRINFO(@"[改写] 番剧首页拼装失败，原样返回");
+                return body;
+            }
+            NSData *nd = [self dataFromJSON:[self fixImages:o]];
+            if (nd != nil) return nd;
+        } @catch (NSException *e) {
+            BRERR(@"[改写] 番剧首页拼装异常: %@", [e description]);
+        }
+        return body;
     }
 
     // [BROLDHOME] 首页：填充各分区卡片的空 body

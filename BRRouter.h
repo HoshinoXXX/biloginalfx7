@@ -45,6 +45,14 @@ BOOL  BRRespWasGzip(void);
 #ifdef __cplusplus
 }
 #endif
+// [BRLIVEX] 直播：一條房間 → 老客戶端 BiliLiveItem 的欄位
++ (NSDictionary *)brLiveRoomFromDict:(NSDictionary *)it;
+// [BRLIVEX] 番劇時間表：pgc timeline → 舊欄位名（ep_id/ep_index/dayIndex…）
++ (NSDictionary *)brTimelineToOld:(NSDictionary *)j;
+// [BRLIVEX] 番劇首頁：用 timeline + 索引拼出 BBPhoneBangumiHomeModel
++ (NSDictionary *)brBangumiHomeFromTimeline:(NSDictionary *)j
+                                      index:(NSDictionary *)idx;
+
 // [BRSTAT3] 把一条视频映射成 App 分区卡片期望的 6 字段
 //   （title/cover/param/play/danmaku/finish，型别与 home_init/config 一致）。
 //   play/danmaku 显式传入（ranking/region 的 play/video_review）；
