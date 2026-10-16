@@ -1098,8 +1098,15 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
     //   所以这里不改写，让 App 用它的原始接口。
     if ([path isEqualToString:@"/x/v2/region"] ||
         [path isEqualToString:@"/x/v2/region/index"]) {
-        BRINFO(@"[改写] /x/v2/region 是分区列表请求 → 原样透传（不改写）");
-        return nil;
+        // [BRREGIONHOME] 原本是「原樣透傳」，但 2026-10-16 實測伺服器已回
+        //   code=-400 请求错误 → 分區選單拿不到東西。
+        //   改用 App 自帶的 tidMetaNIirV2.json 組出回應（見 convertResponse）。
+        BRRoute *rh = [[BRRoute alloc] init];
+        rh.kind = @"regionhome";
+        rh.url = nil;                      // 不改寫上游，只取代回應
+        rh.note = @"分区菜单（用本机清单组）";
+        BRINFO(@"[改写] /x/v2/region → regionhome（用本机分区清单组）");
+        return rh;
     }
 
     // ★★★ /region/show/dynamic 是「二级/动态分区」，不是一级分区。
@@ -1442,6 +1449,73 @@ static NSString *BRStripEm(NSString *s) {
             if (nd != nil) return nd;
         } @catch (NSException *e) {
             BRERR(@"[改写] 番剧首页拼装异常: %@", [e description]);
+        }
+        return body;
+    }
+
+    // ================= [BRREGIONHOME] 分區選單 =================
+    //   2026-10-16 實測：伺服器對 /x/v2/region 回 code=-400、/x/v2/partition 回 404、
+    //   /x/v2/region/show/dynamic 回空陣列 —— 舊分區介面全掛了。
+    //   而 App 自己帶了完整清單 tidMetaNIirV2.json（13 個一級分區 + children），
+    //   結構正好對應 BBPhoneRegionModel { banners, catalogys, recommends } 與
+    //   BBPhoneVideoCategoryMeta { tid, name, children }（兩個獨立來源形狀一致）。
+    //   所以直接用 App 自帶的檔案組出回應。
+    if ([route.kind isEqualToString:@"regionhome"]) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/br-noregionhome"]) {
+            BRINFO(@"[改写] 分区菜单转换已被 /tmp/br-noregionhome 关闭");
+            return body;
+        }
+        @try {
+            // 優先讀完整清單，其次退回較小的 tidMetaV2
+            NSString *path = [[NSBundle mainBundle] pathForResource:@"tidMetaNIirV2" ofType:@"json"];
+            if (path == nil) path = [[NSBundle mainBundle] pathForResource:@"tidMetaV2" ofType:@"json"];
+            if (path == nil) {
+                BRERR(@"[改写] 找不到本机分区清单（tidMetaNIirV2.json）");
+                return body;
+            }
+            NSData *fd = [NSData dataWithContentsOfFile:path];
+            NSArray *cats = fd ? [self jsonFromData:fd] : nil;
+            if (![cats isKindOfClass:[NSArray class]] || [cats count] == 0) {
+                BRERR(@"[改写] 分区清单解析失败或为空");
+                return body;
+            }
+            NSMutableArray *out = [NSMutableArray array];
+            for (id one in cats) {
+                if (![one isKindOfClass:[NSDictionary class]]) continue;
+                NSMutableDictionary *c = [NSMutableDictionary dictionary];
+                id tid = [one objectForKey:@"tid"];
+                [c setObject:(tid ?: @0) forKey:@"tid"];
+                [c setObject:([one objectForKey:@"name"] ?: @"") forKey:@"name"];
+                id kids = [one objectForKey:@"children"];
+                if (![kids isKindOfClass:[NSArray class]]) kids = @[];
+                [c setObject:kids forKey:@"children"];
+                // 老模型另有這幾個欄位，補上空值避免 nil
+                [c setObject:@0 forKey:@"needNavigation"];
+                [c setObject:@0 forKey:@"selfAsChild"];
+                if (tid != nil) [c setObject:tid forKey:@"parentTid"];
+                NSMutableArray *ids = [NSMutableArray array];
+                for (id k in kids) {
+                    if ([k isKindOfClass:[NSDictionary class]]) {
+                        id kt = [k objectForKey:@"tid"];
+                        if (kt != nil) [ids addObject:kt];
+                    }
+                }
+                [c setObject:ids forKey:@"childrenIdArray"];
+                [c setObject:kids forKey:@"childrenArray"];
+                [out addObject:c];
+            }
+            NSDictionary *inner = @{
+                @"banners": @[],
+                @"catalogys": out,
+                @"catalogs": out,              // 常見的拼法，兩種都給
+                @"recommends": @[],
+            };
+            BRINFO(@"[改写] 分区菜单：用本机清单组出 %lu 个一级分区", (unsigned long)[out count]);
+            NSData *nd = [self dataFromJSON:[self fixImages:@{
+                @"code": @0, @"message": @"0", @"data": inner, @"result": inner }]];
+            if (nd != nil) return nd;
+        } @catch (NSException *e) {
+            BRERR(@"[改写] 分区菜单组装修败: %@", [e description]);
         }
         return body;
     }
