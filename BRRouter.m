@@ -822,7 +822,12 @@ static NSMutableDictionary *gBRRegionCache = nil;   // rid -> @{@"t":时间, @"v
         NSString *rid = qs[@"rid"] ?: @"0";
         if ([rid isEqualToString:@"all"]) rid = @"0";
         r.url = [NSString stringWithFormat:
-                 @"https://api.bilibili.com/x/web-interface/ranking/v2?rid=%@&type=all", rid];
+                 // [BRRANKLEGACY] 2026-10-16 實測：ranking/v2 對老 UA（裝置用的）
+                 //   回 -352 风控校验失败，只有現代 UA 才過；而老介面
+                 //   x/web-interface/ranking?rid=&day=3 用老 UA 就能拿到 100 筆，
+                 //   且元素是扁平經典欄位（play / video_review / author / mid），
+                 //   正是這個 2014 年 App 期望的形狀。
+                 @"https://api.bilibili.com/x/web-interface/ranking?rid=%@&day=3", rid];
         r.kind = @"list";
         r.extra = @{@"listKey": @"list"};
         r.note = @"排行榜";
@@ -2152,7 +2157,11 @@ static NSString *BRStripEm(NSString *s) {
             NSNumber *fake = (fakeLL > 0) ? @(fakeLL) : nil;
 
             id play = [r objectForKey:@"play"];   if (play == nil) play = [stat objectForKey:@"view"];
-            id dm   = [r objectForKey:@"danmaku"]; if (dm == nil) dm = [stat objectForKey:@"danmaku"];
+            // [BRRANKLEGACY] 老介面（x/web-interface/ranking）的彈幕欄位叫
+            //   video_review，不是 danmaku —— 少了這個 fallback 彈幕會顯示 0。
+            id dm   = [r objectForKey:@"danmaku"];
+            if (dm == nil) dm = [r objectForKey:@"video_review"];
+            if (dm == nil) dm = [stat objectForKey:@"danmaku"];
             id author = [r objectForKey:@"author"]; if (author == nil) author = [owner objectForKey:@"name"];
             id mid    = [r objectForKey:@"mid"];    if (mid == nil) mid = [owner objectForKey:@"mid"];
             id face   = [r objectForKey:@"face"];   if (face == nil) face = [owner objectForKey:@"face"];
