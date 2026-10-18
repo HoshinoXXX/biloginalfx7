@@ -1832,6 +1832,40 @@ static NSString *BRStripEm(NSString *s) {
                 id nv = [self virtualizeAids:v];
                 if (nv != nil) v = nv;
             }
+            // [BRVZ_GENERIC] ★★ 值導向的通用虛擬化（照筆記「攔截層統一處理」）。
+            //   先前只轉 aid / avid / param 三個鍵名 —— 只要 App 用的欄位叫別的名字
+            //   （id / oid / oid_str …），15 位 aid 就會漏進 App 的 32 位模型，
+            //   被截斷成 2147483647 → 詳情請求 ?aid=2147483647 → 404「視頻不見了喲」。
+            //   這裡不再看鍵名，只看「值長得像不像現代 aid」：
+            //     純數字、長度 10~18、且 > INT32_MAX。
+            //   （秒級時間戳約 1.7e9 < 2.147e9，不會被誤傷。）
+            @try {
+                BOOL alreadyHandled = ([k isKindOfClass:[NSString class]] &&
+                    ([k isEqualToString:@"aid"] || [k isEqualToString:@"avid"] ||
+                     [k isEqualToString:@"param"]));
+                if (!alreadyHandled &&
+                    (([v isKindOfClass:[NSString class]] || [v isKindOfClass:[NSNumber class]]))) {
+                    NSString *sv = [v isKindOfClass:[NSString class]] ? (NSString *)v : [v description];
+                    if ([sv length] >= 10 && [sv length] <= 18) {
+                        BOOL digits = YES;
+                        for (NSUInteger i = 0; i < [sv length]; i++) {
+                            unichar ch = [sv characterAtIndex:i];
+                            if (ch < '0' || ch > '9') { digits = NO; break; }
+                        }
+                        if (digits) {
+                            long long ll = [sv longLongValue];
+                            if (ll > 2147483647LL) {
+                                long long f = [BRStore fakeAidForReal:ll];
+                                if (f > 0) {
+                                    BRDBG(@"[改写] 通用虚拟化 %@: %lld -> %lld", k, ll, f);
+                                    v = [NSString stringWithFormat:@"%lld", f];
+                                }
+                            }
+                        }
+                    }
+                }
+            } @catch (NSException *e) { }
+
             [d setObject:(v ?: [NSNull null]) forKey:k];
         }
         return d;
