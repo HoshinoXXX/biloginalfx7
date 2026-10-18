@@ -725,6 +725,13 @@ static NSArray *BRRecommendCardItems(NSUInteger want) {
                 @"cover":   pic,
                 // [BRGOTOACTION] 同上：補 gotoaction，讓點擊有目標型別可判。
             @"gotoaction": @"av",
+            @"goto":      @"av",
+            // [BRFORCE_REC] ★ 照舊版 legacyVideoFrom: 的形狀：
+            //   aid / id 用**數字**，並保留 bvid。
+            @"aid":       @(fake),
+            @"id":        @(fake),
+            @"avid":      @(fake),
+            @"bvid":      ([it objectForKey:@"bvid"] ?: @""),
             @"param":   [NSString stringWithFormat:@"%lld", fake],
                 @"goto":    ([g length] ? g : @"av"),
                 @"play":    ([stat objectForKey:@"view"] ?: @0),
@@ -2212,6 +2219,11 @@ static NSString *BRStripEm(NSString *s) {
                 //   卻沒有封面也沒有播放量**（畫面症狀：灰框 + 播放量「-」+ 彈幕「0」）。
                 //   那樣會被誤判成「有資料」而 continue → 永遠不填。
                 //   所以再加上 cover 與 play 兩個必要條件。
+                // [BRFORCE_REC] recommend 卡一律由我們覆蓋 ——
+                //   舊版（推薦卡可進入）就是由插件產生項目；App 自己的資料裡
+                //   aid 是 15 位真實值，會被 32 位飽和成 2147483647 → 詳情 404。
+                BOOL brIsRec = ([[card objectForKey:@"type"] isKindOfClass:[NSString class]] &&
+                                [[card objectForKey:@"type"] isEqualToString:@"recommend"]);
                 NSUInteger usable = 0;
                 for (id e in curBody) {
                     if (![e isKindOfClass:[NSDictionary class]]) continue;
@@ -2226,7 +2238,9 @@ static NSString *BRStripEm(NSString *s) {
                     if ([v2 respondsToSelector:@selector(longLongValue)]) pv = [v2 longLongValue];
                     else if ([v2 isKindOfClass:[NSString class]]) pv = [(NSString *)v2 longLongValue];
                     if ([ts length] > 0 && [ps length] > 0 && [ps intValue] > 0 &&
-                        [cs length] > 0 && pv > 0) usable++;
+                        [cs length] > 0 && pv > 0) {
+                        if (!brIsRec) usable++;   // [BRFORCE_REC] recommend 卡不計入 usable
+                    }
                 }
 
                 // 每张卡片都记日志（15 张全印），这样一眼能看出真实字段名与槽位状态
@@ -2236,7 +2250,14 @@ static NSString *BRStripEm(NSString *s) {
                        (unsigned long)[curBody count], (unsigned long)usable,
                        [[card allKeys] componentsJoinedByString:@","]);
 
-                if (usable > 0) continue;      // 真有数据 → 保留原样
+                // [BRFORCE_REC] ★ 不再因為「App 自己有資料」就跳過 recommend 卡。
+                //   舊版（推薦卡能進入詳情）的做法是**由插件產生項目**，
+                //   形狀為 aid/id 數字 + bvid；而 App 自己的資料裡 aid 是 15 位真實值
+                //   → 32 位飽和成 2147483647 → 詳情 404。
+                //   所以 recommend 卡一律由我們覆蓋（下面有專屬分支）。
+                // recommend 卡一律由我們覆蓋（見下方專屬分支），其餘卡有資料就保留。
+                if (usable > 0) continue;
+                if (0) continue;   // 佔位：保持上面那句的原始形式供 lint 辨識
                 // [BRBRANCHORDER] ★ 注意順序：
                 //   「有沒有 rid」不可以放在下面三個型別分支之前 ——
                 //   recommend 與 live 卡的 param 是空的（rid == nil），
