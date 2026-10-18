@@ -1960,6 +1960,11 @@ static NSString *BRStripEm(NSString *s) {
         //     fakeAidForReal: 內部已經在鎖內呼叫 BRSaveMap(@"aidmap.txt") 即時落盤，
         //     所以這裡不需要（也不能）再呼叫一次。
 
+        // [BRHOMEDATAARR] ★ 同一個模式第三次：
+        //   直播頁與搜尋頁都因為 `data` 是字典而報
+        //   `[self.response arrayValue] return nil`；
+        //   直播改成「data = 陣列」之後就正常了（使用者確認過）。
+        //   首頁現在也報同一個錯 → data 改放 list（陣列），字典版放 result。
         NSDictionary *out = @{
             @"code":    @0,
             @"message": @"0",
@@ -1967,7 +1972,8 @@ static NSString *BRStripEm(NSString *s) {
             @"count":   @([list count]),
             @"results": @([list count]),
             @"list":    list,
-            @"data":    @{@"list": list, @"count": @([list count])},
+            @"data":    list,                                    // ★ 陣列
+            @"result":  @{@"list": list, @"count": @([list count])},
         };
         return [BRRouter dataFromJSON:out];
     } @catch (NSException *e) {
