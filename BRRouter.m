@@ -1878,6 +1878,103 @@ static NSString *BRStripEm(NSString *s) {
     return obj;
 }
 
+// =====================================================================
+// [BRHOME_FEED] 首頁 → 推薦流（Alpha25 版的主頁處理）
+//   輸出「老式視頻清單」，形狀照參考實作 BRListHandler.m：
+//     { code:0, pages, count, results, list:[{type,aid(int),pic,author,play,...}] }
+//   aid 用 **int 型別的假 aid** —— 老客戶端的 BiliVideo.avid 是 unsigned int，
+//   給 15 位真值會被截斷成 2147483647（正是「視頻不見了喲」）。
+// =====================================================================
++ (NSData *)brHomeFeedJSON {
+    @try {
+        NSString *u = [NSString stringWithFormat:
+            @"https://api.bilibili.com/x/web-interface/wbi/index/top/feed/rcmd"
+            @"?ps=20&fresh_type=3&platform=web&version=1&homepage_ver=1"];
+        NSData *dt = BRRegionHttpGet([BRSession wbiSignURL:u]);
+        if (dt == nil) return nil;
+        NSDictionary *j = [BRRouter jsonFromData:dt];
+        NSDictionary *dd = [j objectForKey:@"data"];
+        NSArray *src = nil;
+        if ([dd isKindOfClass:[NSDictionary class]]) {
+            id it = [dd objectForKey:@"item"];
+            if ([it isKindOfClass:[NSArray class]]) src = it;
+        } else if ([dd isKindOfClass:[NSArray class]]) {
+            src = dd;
+        }
+        if (![src isKindOfClass:[NSArray class]] || [src count] == 0) return nil;
+
+        NSMutableArray *list = [NSMutableArray array];
+        for (id raw in src) {
+            if ([list count] >= 20) break;
+            if (![raw isKindOfClass:[NSDictionary class]]) continue;
+            NSDictionary *it = raw;
+            NSString *g = [it objectForKey:@"goto"];
+            if ([g isKindOfClass:[NSString class]] && [g length] > 0 &&
+                ![g isEqualToString:@"av"] && ![g isEqualToString:@"video"]) continue;
+
+            id idRaw = [it objectForKey:@"id"];
+            if (idRaw == nil) idRaw = [it objectForKey:@"aid"];
+            long long realAid = 0;
+            if ([idRaw respondsToSelector:@selector(longLongValue)])
+                realAid = [idRaw longLongValue];
+            if (realAid <= 0) continue;
+            long long fake = [BRStore fakeAidForReal:realAid];
+            if (fake <= 0) continue;
+
+            NSDictionary *stat = [it objectForKey:@"stat"];
+            if (![stat isKindOfClass:[NSDictionary class]]) stat = @{};
+            NSDictionary *owner = [it objectForKey:@"owner"];
+            if (![owner isKindOfClass:[NSDictionary class]]) owner = @{};
+
+            NSString *pic = BRPicFix([it objectForKey:@"pic"] ?: @"");
+            NSString *author = [owner objectForKey:@"name"] ?: @"UP主";
+            id playV = [stat objectForKey:@"view"] ?: @0;
+            id dmV   = [stat objectForKey:@"danmaku"] ?: @0;
+            id repV  = [stat objectForKey:@"reply"] ?: @0;
+            id favV  = [stat objectForKey:@"favorite"] ?: @0;
+            long long dur = 0;
+            id durRaw = [it objectForKey:@"duration"];
+            if ([durRaw respondsToSelector:@selector(longLongValue)])
+                dur = [durRaw longLongValue];
+
+            [list addObject:@{
+                @"type":         @"video",
+                @"aid":          @((int)fake),
+                @"pic":          (pic ?: @""),
+                @"title":        ([it objectForKey:@"title"] ?: @""),
+                @"author":       author,
+                @"description":  ([it objectForKey:@"desc"] ?: @""),
+                @"play":         @([playV longLongValue]),
+                @"video_review": @([dmV longLongValue]),
+                @"review":       @([repV longLongValue]),
+                @"favorites":    @([favV longLongValue]),
+                @"create":       @"",
+                @"pages":        @1,
+                @"duration":     [NSString stringWithFormat:@"%lld:%02lld",
+                                  dur / 60, dur % 60],
+            }];
+        }
+        if ([list count] == 0) return nil;
+
+        @try { [BRStore flushMapNow]; } @catch (NSException *e) { }
+
+        NSDictionary *out = @{
+            @"code":    @0,
+            @"message": @"0",
+            @"pages":   @1,
+            @"count":   @([list count]),
+            @"results": @([list count]),
+            @"list":    list,
+            @"data":    @{@"list": list, @"count": @([list count])},
+        };
+        return [BRRouter dataFromJSON:out];
+    } @catch (NSException *e) {
+        BRERR(@"[改写] brHomeFeedJSON 异常: %@", [e description]);
+        return nil;
+    }
+}
+
+
 + (NSData *)convertResponse:(NSData *)body forRoute:(BRRoute *)route {
     // [BRGUNZIP_IN_CONV] ★ 若是 gzip 压缩体，先解压再处理。
     //   之前几轮「改了数据但界面没变」很可能就是这个原因：
@@ -2165,7 +2262,30 @@ static NSString *BRStripEm(NSString *s) {
         return body;
     }
 
-    // [BROLDHOME] 首页：填充各分区卡片的空 body
+    // [BRHOME_FEED] ★★ 回歸「Alpha25 版」的首頁處理（使用者指定）。
+    //   真機證據：App 的首頁卡片模型 param 100% 來自它自帶的 2017 config
+    //   （setParam 112 個值 vs config 60 個樣本 → 112/112 命中），
+    //   所以「填卡片 body」永遠不會被使用 —— 卡片一直是 config 舊資料（點不動），
+    //   按刷新拉到真資料後 aid 又被截斷成 2147483647（詳情 404）。
+    //   參考實作（源码/src/handlers/BRListHandler.m）的做法是：
+    //     首頁 → wbi/index/top/feed/rcmd，「老式視頻清單」形狀輸出
+    //     { code:0, pages, count, results, list:[{type,aid(int),pic,author,play,…}] }
+    //   這裡照做：把 oldhome 直接轉成那份清單。
+    if ([route.kind isEqualToString:@"oldhome"]) {
+        @try {
+            NSData *fd = [BRRouter brHomeFeedJSON];
+            if (fd != nil) {
+                BRINFO(@"[改写] oldhome → 推薦流清單（Alpha25 主頁處理），%lu 位元組",
+                       (unsigned long)[fd length]);
+                return fd;
+            }
+            BRINFO(@"[改写] oldhome → 推薦流取不到，回退舊的卡片填充");
+        } @catch (NSException *e) {
+            BRERR(@"[改写] oldhome 推薦流轉換異常: %@", [e description]);
+        }
+    }
+
+    // [BROLDHOME] 首页：填充各分区卡片的空 body（舊做法，僅在推薦流失敗時作後備）
     if ([route.kind isEqualToString:@"oldhome"]) {
         // [BRNEWLISTX] 安全开关：/tmp/br-fill-off 存在时完全不碰首页，
         //   保证 App 稳定（分区卡片会是空的，但绝不崩）。
