@@ -563,6 +563,23 @@ static NSURLRequest *BRRewriteRequest(NSURLRequest *req) {
 
 
 static NSData *(*o_sendSync)(id, SEL, NSURLRequest *, NSURLResponse **, NSError **);
+// [BRAVIDDIAG] 診斷用的 hook：只記錄，不改行為。
+static void (*o_setAvid)(id, SEL, long long);
+static void h_setAvid(id self, SEL _cmd, long long v) {
+    @try {
+        BRINFO(@"[诊断] BiliVideo setAvid: %lld  (类=%@)", v, NSStringFromClass([self class]));
+    } @catch (NSException *e) { }
+    if (o_setAvid) o_setAvid(self, _cmd, v);
+}
+
+static void (*o_setHomeParam)(id, SEL, id);
+static void h_setHomeParam(id self, SEL _cmd, id v) {
+    @try {
+        BRINFO(@"[诊断] BiliHomeBodyItem setParam: %@  (类=%@)", v, NSStringFromClass([self class]));
+    } @catch (NSException *e) { }
+    if (o_setHomeParam) o_setHomeParam(self, _cmd, v);
+}
+
 static NSData *h_sendSync(id self, SEL _cmd, NSURLRequest *req,
                           NSURLResponse **respOut, NSError **errOut) {
     @try {
@@ -926,6 +943,34 @@ static void br_hook_login_vcs(void) {
                 MSHookMessageEx(conn, @selector(initWithRequest:delegate:startImmediately:),
                     (IMP)&h_initWithRequestStart, (IMP *)&o_initWithRequestStart);
                 BRMark("06 NSURLConnection 4 个入口已挂载");
+
+                // [BRAVIDDIAG] ★ 診斷「分區卡片點不進去」。
+                //   事實：卡片元素的 aid/avid/param 都是 "1000005378"，
+                //    App 也確實渲染了封面與播放量，但點擊送出固定值 2147483647。
+                //   → App 的點擊處理不讀那三個欄位。
+                //   所以 hook「把 aid 塞進模型」的入口，看它實際收到什麼。
+                //   純記錄、不改行為。
+                @try {
+                    Class bv = NSClassFromString(@"BiliVideo");
+                    if (bv != Nil) {
+                        MSHookMessageEx(bv, @selector(setAvid:),
+                            (IMP)&h_setAvid, (IMP *)&o_setAvid);
+                        BRINFO(@"[诊断] 已 hook BiliVideo setAvid:");
+                    } else {
+                        BRINFO(@"[诊断] 找不到 BiliVideo 类");
+                    }
+                } @catch (NSException *e) { }
+                @try {
+                    // 也 hook 通用的 setAvid:（各模型的父類或其它模型）
+                    Class bv2 = NSClassFromString(@"BiliHomeBodyItem");
+                    if (bv2 != Nil) {
+                        MSHookMessageEx(bv2, @selector(setParam:),
+                            (IMP)&h_setHomeParam, (IMP *)&o_setHomeParam);
+                        BRINFO(@"[诊断] 已 hook BiliHomeBodyItem setParam:");
+                    } else {
+                        BRINFO(@"[诊断] 找不到 BiliHomeBodyItem 类");
+                    }
+                } @catch (NSException *e) { }
                 BRINFO(@"NSURLConnection 已挂载");
                 // ★★★ NSURLSession 挂钩（App 大量使用；之前完全没覆盖）
                 Class sessCls = NSClassFromString(@"NSURLSession");
