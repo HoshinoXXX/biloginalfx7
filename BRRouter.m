@@ -1194,10 +1194,17 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
                            @"&dm_img_str=V2ViR0wgMS4wIChPcGVuR0wgRVMgMi4wIENocm9taXVtKQ"
                            @"&dm_img_inter=%7B%22ds%22%3A%5B%5D%2C%22wh%22%3A%5B0%2C0%2C0%5D%2C%22of%22%3A%5B0%2C0%2C0%5D%7D"];
         r.url = base;
-        r.kind = @"search";
+        // [BRSEARCH_RAW] ★★ 搜尋**不做轉換**，原樣透傳。
+        //   使用者明確指出：「修之前這三個能搜到，你修了之後輸出和客戶端不兼容，
+        //   導致什麼內容也沒。」
+        //   真機診斷也證實：上游回應是 data.items（App API 原生格式），
+        //   而我的轉換器只認 data.result，還把它重組成 {list, data:[]} →
+        //   把 App 本來看得懂的資料改壞了。
+        //   所以這裡改回 raw：請求照樣導到可用的新介面，但**回應不動**。
+        r.kind = @"raw";
         // ★ 搜索接口必须用浏览器 UA（其它接口要用 App UA —— 要求正好相反）
         r.ua = [BRSession searchUA];
-        r.note = @"搜索";
+        r.note = @"搜索（原样透传）";
         return r;
     }
 
@@ -2808,7 +2815,13 @@ static NSString *BRStripEm(NSString *s) {
 
     // ---------- 搜索：老客户端要顶层 list + page ----------
     // ================= 搜索（照搬 5.9 参考实现 search_to_old）=================
+    // [BRSEARCH_RAW] 搜尋一律原樣透傳（理由見路由層註解）。
+    //   保留原本的轉換器程式碼（以備日後需要），但不再執行。
     if ([kind isEqualToString:@"search"]) {
+        BRINFO(@"[改写] search 原樣透傳（App 原生就能解析 data.items）");
+        return body;
+    }
+    if (0 && [kind isEqualToString:@"search"]) {
         NSDictionary *j = [self jsonFromData:body];
         NSDictionary *dd = [j objectForKey:@"data"];
         NSArray *result = nil;
