@@ -892,6 +892,44 @@ static void br_hook_login_vcs(void) {
         } @catch (NSException *e) { }
 
         // ② ID 映射（原来是 +load，现在显式调用）
+        // [BRCACHECLEAR] ★★★ 依使用者指示的設計（顯示假 aid、跳轉換回真 aid），
+        //   必須確保 App **不會從舊快取讀到轉換前的真實 15 位 aid**。
+        //   真機實查 Library/Caches/BiliObjectCacheKVDBNameV2 裡同時存在
+        //     真實 15 位 aid（117313122672516…）與假 aid（1300792803…），
+        //   而點擊時 App 送的是 21xxxxxxxx —— 正是真實 aid 被 32 位飽和後的樣子。
+        //   所以啟動時清掉這兩個快取；只在版本變更後清一次，避免拖慢。
+        @try {
+            NSString *home = NSHomeDirectory();
+            NSString *ver = [[[NSBundle mainBundle] infoDictionary]
+                                 objectForKey:@"CFBundleVersion"] ?: @"?";
+            NSString *mark = [NSString stringWithFormat:@"/tmp/br-cachecleared-%@", ver];
+            if (![[NSFileManager defaultManager] fileExistsAtPath:mark]) {
+                NSArray *names = @[@"BiliObjectCacheKVDBNameV2",
+                                   @"BiliApiCacheKVDBNameV2"];
+                NSArray *bases = @[
+                    [home stringByAppendingPathComponent:@"Library/Caches"],
+                    [home stringByAppendingPathComponent:@"Documents"],
+                    [home stringByAppendingPathComponent:@"Library/Preferences"]
+                ];
+                NSUInteger removed = 0;
+                for (NSString *b in bases) {
+                    for (NSString *n in names) {
+                        NSString *f = [b stringByAppendingPathComponent:n];
+                        if ([[NSFileManager defaultManager] fileExistsAtPath:f]) {
+                            if ([[NSFileManager defaultManager] removeItemAtPath:f
+                                                                           error:NULL])
+                                removed++;
+                        }
+                    }
+                }
+                [[NSFileManager defaultManager] createFileAtPath:mark
+                                                        contents:[NSData data]
+                                                      attributes:nil];
+                BRINFO(@"[cache] 已清除 App 舊快取 %lu 個（避免讀到轉換前的真實 aid）",
+                       (unsigned long)removed);
+            }
+        } @catch (NSException *e) { }
+
         @try {
             [BRStore bootstrap];
             BRMark("02 BRStore bootstrap 完成");
