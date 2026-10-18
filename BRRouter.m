@@ -609,12 +609,28 @@ static NSData *BRRegionHttpGet(NSString *url) {
         //   證明它**不是**用 param/aid/avid 當點擊目標。
         //   BiliHomeBodyItem 裡唯一的動作欄位是 _gotoaction，
         //   所以補上 gotoaction（與 goto 一併給，純新增）。
+        // [BROLDKEYS] ★★ 照舊版（實測推薦卡可進入詳情）補齊三個關鍵差異：
+        //   ① aid / id / avid 用 **NSNumber**（不是字串）——
+        //      老客戶端的 JSON→模型映射對這些欄位期待數字，字串可能因型別不符被忽略。
+        //   ② 多給 **id** 這個鍵（舊版有給）。
+        //   ③ **保留 bvid**（使用者提供的檔名就寫著「清空 bvid 後分區卡片失效」）。
+        //   另外 cid 也一併帶上（舊版有）。
+        NSNumber *fakeNum = @(fake);
+        NSString *bv = [it objectForKey:@"bvid"];
+        if (![bv isKindOfClass:[NSString class]]) bv = @"";
+        NSNumber *cidNum = @0;
+        id cidRaw = [it objectForKey:@"cid"];
+        if (cidRaw && [cidRaw respondsToSelector:@selector(longLongValue)])
+            cidNum = @([cidRaw longLongValue]);
         return @{
             @"title":      [it objectForKey:@"title"] ?: @"",
             @"cover":      pic,
-            @"param":      key,
-            @"aid":        key,
-            @"avid":       key,
+            @"param":      key,          // 字串（config 樣本如此）
+            @"aid":        fakeNum,      // ★ 數字
+            @"id":         fakeNum,      // ★ 數字（舊版也有）
+            @"avid":       fakeNum,      // ★ 數字
+            @"bvid":       bv,           // ★ 保留
+            @"cid":        cidNum,
             @"play":       playV,
             @"danmaku":    dmV,
             @"finish":     @0,
@@ -1792,6 +1808,16 @@ static NSString *BRStripEm(NSString *s) {
                     if (f > 0) {
                         BRDBG(@"[改写] param 虚拟化 %lld -> %lld", ll, f);
                         v = [NSString stringWithFormat:@"%lld", f];
+                        // [BRVZ_INJECT] ★ App 自己的卡片項目只有 param（字串），
+                        //   沒有 aid / id —— 而舊版 `legacyVideoFrom:`（實測推薦卡
+                        //   能進入詳情）是把 aid 與 id 都輸出成**數字**。
+                        //   所以在這裡一併補上（數字型別），讓點擊有東西可讀。
+                        if ([d objectForKey:@"aid"] == nil)
+                            [d setObject:@(f) forKey:@"aid"];
+                        if ([d objectForKey:@"id"] == nil)
+                            [d setObject:@(f) forKey:@"id"];
+                        if ([d objectForKey:@"avid"] == nil)
+                            [d setObject:@(f) forKey:@"avid"];
                     }
                 }
             } else {
