@@ -1764,6 +1764,36 @@ static NSString *BRStripEm(NSString *s) {
                     long long f = [BRStore fakeAidForReal:ll];
                     if (f > 0) v = @(f);
                 }
+            } else if ([k isKindOfClass:[NSString class]] &&
+                       [k isEqualToString:@"param"] &&
+                       ([v isKindOfClass:[NSString class]] ||
+                        [v isKindOfClass:[NSNumber class]])) {
+                // [BRVZ_PARAM] ★★ 關鍵修正。
+                //   老客戶端的影片模型把 aid 存成 32 位；而首頁卡片項目把影片 id
+                //   放在 **`param`**（不是 aid/avid），且是 **15 位真實 aid**。
+                //   virtualizeAids 原本只轉 aid/avid → `param` 沒被虛擬化
+                //   → 15 位數字進到 32 位模型 → 飽和成 2147483647
+                //   → 詳情請求 ?aid=2147483647 → 404「啥都木有」→「視頻不見了喲」。
+                //
+                //   安全條件：**只有「大於 INT32_MAX 的純數字」才轉**。
+                //   rid（1/3/167）、season_id（5538）、room_id（37034）等小數字
+                //   一律原樣，不會被誤傷。
+                long long ll = 0;
+                NSString *sv = [v isKindOfClass:[NSString class]]
+                    ? (NSString *)v : [v description];
+                BOOL allDigits = ([sv length] > 0);
+                for (NSUInteger i = 0; i < [sv length]; i++) {
+                    unichar ch = [sv characterAtIndex:i];
+                    if (ch < '0' || ch > '9') { allDigits = NO; break; }
+                }
+                if (allDigits) ll = [sv longLongValue];
+                if (ll > 2147483647LL) {
+                    long long f = [BRStore fakeAidForReal:ll];
+                    if (f > 0) {
+                        BRDBG(@"[改写] param 虚拟化 %lld -> %lld", ll, f);
+                        v = [NSString stringWithFormat:@"%lld", f];
+                    }
+                }
             } else {
                 id nv = [self virtualizeAids:v];
                 if (nv != nil) v = nv;
