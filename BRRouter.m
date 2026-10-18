@@ -604,15 +604,22 @@ static NSData *BRRegionHttpGet(NSString *url) {
         //   真機日誌顯示 App 送出的 aid 是 2147483647（它自己的佔位符），
         //   表示它**沒有採用我們填的 param** → 很可能它讀的是 item 的 `aid`。
         //   所以 param / aid / avid 三個鍵都給（純新增，不影響既有行為）。
+        // [BRGOTOACTION] ★ App 解析得出封面與播放量（所以模型有拿到 param），
+        //   但點擊時送的卻是 aid=2147483647（它自己的佔位符）——
+        //   證明它**不是**用 param/aid/avid 當點擊目標。
+        //   BiliHomeBodyItem 裡唯一的動作欄位是 _gotoaction，
+        //   所以補上 gotoaction（與 goto 一併給，純新增）。
         return @{
-            @"title":   [it objectForKey:@"title"] ?: @"",
-            @"cover":   pic,
-            @"param":   key,
-            @"aid":     key,
-            @"avid":    key,
-            @"play":    playV,
-            @"danmaku": dmV,
-            @"finish":  @0,
+            @"title":      [it objectForKey:@"title"] ?: @"",
+            @"cover":      pic,
+            @"param":      key,
+            @"aid":        key,
+            @"avid":       key,
+            @"play":       playV,
+            @"danmaku":    dmV,
+            @"finish":     @0,
+            @"goto":       @"av",
+            @"gotoaction": @"av",
         };
     } @catch (NSException *e) {
         return nil;
@@ -700,7 +707,9 @@ static NSArray *BRRecommendCardItems(NSUInteger want) {
             [out addObject:@{
                 @"title":   [it objectForKey:@"title"] ?: @"",
                 @"cover":   pic,
-                @"param":   [NSString stringWithFormat:@"%lld", fake],
+                // [BRGOTOACTION] 同上：補 gotoaction，讓點擊有目標型別可判。
+            @"gotoaction": @"av",
+            @"param":   [NSString stringWithFormat:@"%lld", fake],
                 @"goto":    ([g length] ? g : @"av"),
                 @"play":    ([stat objectForKey:@"view"] ?: @0),
                 @"danmaku": ([stat objectForKey:@"danmaku"] ?: @0),
@@ -824,7 +833,10 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
             if (c != nil) {
                 NSTimeInterval age = [[NSDate date] timeIntervalSince1970] -
                                      [[c objectForKey:@"t"] doubleValue];
-                if (age < 120.0) {
+                // [BRTTL20] ★ 原本是 120 秒 —— 使用者按「刷新」時每個分區都命中快取，
+                //   內容一模一樣 → 看起來就是「刷新鍵沒反應」。
+                //   並行預取已把單次抓取降到約 6 秒，20 秒足夠避免重複抓取。
+                if (age < 20.0) {
                     NSArray *v = [c objectForKey:@"v"];
                     if ([v isKindOfClass:[NSArray class]] && [v count] > 0) {
                         BRDBG(@"[改写] 分区 %@ 命中缓存 %lu 条", rid, (unsigned long)[v count]);
@@ -921,7 +933,7 @@ static NSArray *BRBangumiCardItems(NSUInteger want) {
                     if (pc != nil) {
                         NSTimeInterval page = [[NSDate date] timeIntervalSince1970] -
                                               [[pc objectForKey:@"t"] doubleValue];
-                        if (page < 120.0) {
+                        if (page < 20.0) {   // [BRTTL20] 同上
                             id pv = [pc objectForKey:@"v"];
                             if ([pv isKindOfClass:[NSArray class]] && [pv count] > 0) {
                                 pop = pv;
@@ -2244,7 +2256,18 @@ static NSString *BRStripEm(NSString *s) {
                     filled++;
                     BRINFO(@"[改写] oldhome 已填 %@（rid=%@）%lu 条", ttl, rid,
                            (unsigned long)[vs count]);
-                    BRINFO(@"[改写] oldhome 填进去的第一个元素: %@", [vs objectAtIndex:0]);
+                    // [BRGOTOACTION] 改成一行的緊湊 JSON ——
+                    //   先前是多行（description 會換行），日誌只截到 "{" 看不出內容。
+                    @try {
+                        NSData *jd = [self dataFromJSON:[vs objectAtIndex:0]];
+                        NSString *js = jd ? [[NSString alloc] initWithData:jd
+                                                                  encoding:NSUTF8StringEncoding]
+                                          : nil;
+                        BRINFO(@"[改写] oldhome 填进去的第一个元素(JSON): %@",
+                               js ?: [vs objectAtIndex:0]);
+                    } @catch (NSException *e) {
+                        BRINFO(@"[改写] oldhome 填进去的第一个元素: %@", [vs objectAtIndex:0]);
+                    }
                 }
             }
             NSMutableDictionary *out = [NSMutableDictionary dictionaryWithDictionary:oh];
