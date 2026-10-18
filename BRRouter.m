@@ -1956,7 +1956,9 @@ static NSString *BRStripEm(NSString *s) {
         }
         if ([list count] == 0) return nil;
 
-        @try { [BRStore flushMapNow]; } @catch (NSException *e) { }
+        // 註：參考實作有 flushMapNow，我的 BRStore 沒有這個 API；
+        //     fakeAidForReal: 內部已經在鎖內呼叫 BRSaveMap(@"aidmap.txt") 即時落盤，
+        //     所以這裡不需要（也不能）再呼叫一次。
 
         NSDictionary *out = @{
             @"code":    @0,
