@@ -723,16 +723,17 @@ static NSArray *BRRecommendCardItems(NSUInteger want) {
             [out addObject:@{
                 @"title":   [it objectForKey:@"title"] ?: @"",
                 @"cover":   pic,
-                // [BRGOTOACTION] 同上：補 gotoaction，讓點擊有目標型別可判。
-            @"gotoaction": @"av",
-            @"goto":      @"av",
-            // [BRFORCE_REC] ★ 照舊版 legacyVideoFrom: 的形狀：
-            //   aid / id 用**數字**，並保留 bvid。
-            @"aid":       @(fake),
-            @"id":        @(fake),
-            @"avid":      @(fake),
-            @"bvid":      ([it objectForKey:@"bvid"] ?: @""),
-            @"param":   [NSString stringWithFormat:@"%lld", fake],
+                // [BRGOTOACTION] 補 gotoaction，讓點擊有目標型別可判。
+                //   goto 由下面原本那行提供（帶真實的 g）—— 不可重複給，clang 會報
+                //   duplicate key in dictionary literal（實際踩過，CI 失敗）。
+                @"gotoaction": @"av",
+                // [BRFORCE_REC] ★ 照舊版 legacyVideoFrom: 的形狀：
+                //   aid / id 用**數字**，並保留 bvid。
+                @"aid":     @(fake),
+                @"id":      @(fake),
+                @"avid":    @(fake),
+                @"bvid":    ([it objectForKey:@"bvid"] ?: @""),
+                @"param":   [NSString stringWithFormat:@"%lld", fake],
                 @"goto":    ([g length] ? g : @"av"),
                 @"play":    ([stat objectForKey:@"view"] ?: @0),
                 @"danmaku": ([stat objectForKey:@"danmaku"] ?: @0),
