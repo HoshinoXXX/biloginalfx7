@@ -1,0 +1,77 @@
+name: Build QQ Probe
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qqprobe/**'
+      - '.github/workflows/qqprobe.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macOS runners are not being allocated for this account (jobs are
+    # cancelled with no runner assigned), while ubuntu-latest works fine.
+    # theos-action supports Linux, so build there instead.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify sources
+        run: |
+          set -e
+          ls -la qqprobe/
+          for f in Makefile control QQProbe.xm QQProbe.plist; do
+            if [ ! -f "qqprobe/$f" ]; then
+              echo "!! missing qqprobe/$f"
+              exit 1
+            fi
+          done
+          echo "sources ok"
+
+      - name: Install Theos (Linux)
+        uses: Randomblock1/theos-action@v1
+        with:
+          theos-dir: 'theos'
+
+      - name: Show toolchain
+        run: |
+          echo "THEOS=$THEOS"
+          ls "$THEOS" | head
+          ls "$THEOS/sdks" | head
+          which clang || true
+
+      - name: Patch liblaunch in 9.3 SDK
+        run: |
+          SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
+          TBD="$SDK/usr/lib/system/liblaunch.tbd"
+          echo "SDK=$SDK"
+          if [ -d "$SDK" ]; then
+            grep -rl 'liblaunch' "$SDK" --include='*.tbd' 2>/dev/null | while read -r f; do
+              if [ "$f" != "$TBD" ]; then
+                sed -i '/liblaunch/d' "$f" || true
+              fi
+            done
+            printf -- '--- !tapi-tbd-v2\narchs: [ armv7 ]\nplatform: ios\ntargets: [ armv7-ios ]\ninstall-name: "/usr/lib/system/liblaunch.dylib"\ncurrent-version: 1\ncompatibility-version: 1\nexports:\n  - archs: [ armv7 ]\n    symbols: [ ]\n' > "$TBD"
+            echo "patched"
+          else
+            echo "!! 9.3 SDK missing"
+            ls "$THEOS/sdks" || true
+          fi
+
+      - name: Build package
+        working-directory: qqprobe
+        run: |
+          make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -80
+
+      - name: List artifacts
+        run: ls -la qqprobe/packages/ || true
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqprobe-deb
+          path: qqprobe/packages/*.deb
+          if-no-files-found: error
