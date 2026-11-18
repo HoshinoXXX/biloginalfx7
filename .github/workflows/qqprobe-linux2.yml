@@ -1,0 +1,70 @@
+name: Build QQ Probe (linux manual)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qqprobe/**'
+      - '.github/workflows/qqprobe-linux.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macOS runners are not allocated for this account (jobs cancelled with no
+    # runner assigned), so build on ubuntu-latest instead. Theos works on Linux
+    # with the system clang plus the SDK stubs from theos/sdks.
+    runs-on: ubuntu-latest
+    env:
+      THEOS: ${{ github.workspace }}/theos
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install dependencies
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq \
+            clang llvm lld make git curl xz-utils fakeroot \
+            libssl-dev libplist-dev libpng-dev libjpeg-dev libtiff-dev \
+            libgcrypt20-dev liblzma-dev libcurl4-openssl-dev zlib1g-dev
+
+      - name: Clone Theos
+        run: |
+          set -e
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          rm -rf "$THEOS/sdks"
+          git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
+          ls "$THEOS" | head
+          echo "--- sdks ---"
+          ls "$THEOS/sdks" | head -20
+
+      - name: Install ldid
+        run: |
+          set -e
+          git clone --depth 1 https://github.com/ProcursusTeam/ldid.git /tmp/ldid-src
+          cd /tmp/ldid-src
+          make CXX=clang++ CC=clang -j4 || make -j4
+          sudo cp ./ldid /usr/local/bin/ldid
+          ldid -h 2>&1 | head -3 || true
+
+      - name: Show toolchain
+        run: |
+          echo "THEOS=$THEOS"
+          which clang; clang --version | head -2
+          which ldid || echo "no ldid"
+
+      - name: Build
+        working-directory: qqprobe
+        run: |
+          make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -100
+
+      - name: List artifacts
+        run: ls -la qqprobe/packages/ || true
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqprobe-deb
+          path: qqprobe/packages/*.deb
+          if-no-files-found: error
