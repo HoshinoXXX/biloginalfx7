@@ -1,0 +1,21 @@
+name: Test Runner
+
+on:
+  workflow_dispatch:
+
+jobs:
+  linux-test:
+    runs-on: ubuntu-latest
+    steps:
+      - name: echo
+        run: |
+          echo "linux runner OK"
+          uname -a
+
+  mac-test:
+    runs-on: macos-14
+    steps:
+      - name: echo
+        run: |
+          echo "mac runner OK"
+          sw_vers
