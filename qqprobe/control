@@ -1,0 +1,9 @@
+Package: com.qqprobe.probe
+Name: QQ Probe (read-only)
+Version: 0.1
+Architecture: iphoneos-arm
+Description: Read-only ObjC runtime probe for QQ 6.2. Dumps class names and method lists into /tmp. Does not modify anything.
+Maintainer: qqprobe
+Author: qqprobe
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 7.0)
