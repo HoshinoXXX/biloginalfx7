@@ -1,0 +1,116 @@
+name: Build QQ Probe (no Theos)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qqprobe/**'
+      - '.github/workflows/qqprobe-clang.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macOS runners are not allocated for this account (jobs cancelled with no
+    # runner assigned), so build on ubuntu-latest. Theos is not used at all -
+    # the probe is a single small dylib, so clang is invoked directly against
+    # the iOS SDK from theos/sdks, and the deb is assembled with dpkg-deb.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm dpkg xz-utils curl
+
+      - name: Fetch iOS SDK
+        run: |
+          set -e
+          mkdir -p /tmp/sdks
+          curl -L --retry 3 -o /tmp/sdks.tar.gz \
+            https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
+          tar -xzf /tmp/sdks.tar.gz -C /tmp/sdks
+          ls /tmp/sdks
+          SDK=$(find /tmp/sdks -maxdepth 2 -name "iPhoneOS9.3.sdk" -type d | head -1)
+          if [ -z "$SDK" ]; then
+            echo "9.3 SDK not found; available:"
+            find /tmp/sdks -maxdepth 2 -name "*.sdk" -type d | head -20
+            SDK=$(find /tmp/sdks -maxdepth 2 -name "*.sdk" -type d | sort | head -1)
+          fi
+          echo "SDK=$SDK"
+          echo "SDK_PATH=$SDK" >> "$GITHUB_ENV"
+          ls "$SDK" | head
+
+      - name: Build dylib with clang
+        run: |
+          set -e
+          mkdir -p out
+          echo "--- clang ---"
+          clang --version | head -2
+
+          clang -target armv7-apple-ios7.0 \
+            -isysroot "$SDK_PATH" \
+            -fobjc-arc \
+            -fmodules-ts -fno-modules \
+            -Wno-deprecated-declarations \
+            -Wno-objc-root-class \
+            -dynamiclib \
+            -install_name /Library/MobileSubstrate/DynamicLibraries/QQProbe.dylib \
+            -o out/QQProbe.dylib \
+            qqprobe/QQProbe.xm \
+            -framework Foundation -framework UIKit \
+            -undefined dynamic_lookup \
+            -fuse-ld=lld 2>&1 | tail -40 || {
+              echo "=== retry without modules ==="
+              clang -target armv7-apple-ios7.0 \
+                -isysroot "$SDK_PATH" \
+                -fobjc-arc \
+                -Wno-deprecated-declarations \
+                -dynamiclib \
+                -install_name /Library/MobileSubstrate/DynamicLibraries/QQProbe.dylib \
+                -o out/QQProbe.dylib \
+                qqprobe/QQProbe.xm \
+                -framework Foundation -framework UIKit \
+                -undefined dynamic_lookup 2>&1 | tail -40
+            }
+
+          echo "--- result ---"
+          ls -l out/
+          file out/QQProbe.dylib || true
+          dd if=out/QQProbe.dylib bs=1 count=8 2>/dev/null | od -An -tx1
+
+      - name: Build deb
+        run: |
+          set -e
+          ROOT=$PWD/debroot
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT/Library/MobileSubstrate/DynamicLibraries"
+          mkdir -p "$ROOT/DEBIAN"
+
+          cp out/QQProbe.dylib "$ROOT/Library/MobileSubstrate/DynamicLibraries/"
+          cp qqprobe/QQProbe.plist "$ROOT/Library/MobileSubstrate/DynamicLibraries/"
+
+          {
+            echo "Package: com.qqprobe.probe"
+            echo "Name: QQ Probe (read-only)"
+            echo "Version: 0.1"
+            echo "Architecture: iphoneos-arm"
+            echo "Description: Read-only ObjC runtime probe for QQ 6.2. Dumps class and method lists into /tmp. Modifies nothing."
+            echo "Maintainer: qqprobe"
+            echo "Author: qqprobe"
+            echo "Section: Tweaks"
+            echo "Depends: mobilesubstrate, firmware (>= 7.0)"
+            echo "Installed-Size: 200"
+          } > "$ROOT/DEBIAN/control"
+
+          dpkg-deb -b "$ROOT" out/qqprobe.deb
+          ls -l out/
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqprobe-deb
+          path: out/*.deb
+          if-no-files-found: error
