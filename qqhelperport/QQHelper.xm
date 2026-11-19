@@ -273,6 +273,27 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
 }
 
+// ============ 10b. QQ空间图片下载器 MQZMutiplePicDownloader ============
+// 完整的类名是 MQZMutiplePicDownloader（MQZ = Mobile QZone）。
+// 图片既不走 NSURLSession 也不走 BDH，而是走它。
+static id (*orig_mqzGetByURL)(id, SEL, id);
+static id hook_mqzGetByURL(id self, SEL _cmd, id url) {
+    QQHPLog(@"[mqz] getMessageModelByURL: %@", url);
+    return orig_mqzGetByURL ? orig_mqzGetByURL(self, _cmd, url) : nil;
+}
+
+static void (*orig_mqzDownloadPics)(id, SEL, id, id);
+static void hook_mqzDownloadPics(id self, SEL _cmd, id model, id completion) {
+    QQHPLog(@"[mqz] downloadPicsByMessageModel: %@", model);
+    if (orig_mqzDownloadPics) orig_mqzDownloadPics(self, _cmd, model, completion);
+}
+
+static void (*orig_mqzStop)(id, SEL);
+static void hook_mqzStop(id self, SEL _cmd) {
+    QQHPLog(@"[mqz] stopDownload");
+    if (orig_mqzStop) orig_mqzStop(self, _cmd);
+}
+
 // ============ 10. BDH 下载层诊断（图片 / 视频 真正走的通道）============
 // 实测图片视频完全不走 NSURLSession，而是走 QQ 自研的 BDHHttp 栈：
 //   BDHHttpConnection 管连接与发送，BDHHttpStream 管 socket 与 HTTP 封包。
@@ -1127,6 +1148,21 @@ static void QQHInit(void) {
                            (IMP)&hook_iStatusCode, (IMP *)&orig_iStatusCode);
             } else {
                 QQHPLog(@"BDHHttpStream missing");
+            }
+        }
+
+        // 10b. QQ空间图片下载器
+        {
+            Class c = NSClassFromString(@"MQZMutiplePicDownloader");
+            if (c != Nil) {
+                QQHSwizzle(c, @selector(getMessageModelByURL:),
+                           (IMP)&hook_mqzGetByURL, (IMP *)&orig_mqzGetByURL);
+                QQHSwizzle(c, @selector(downloadPicsByMessageModel:completion:),
+                           (IMP)&hook_mqzDownloadPics, (IMP *)&orig_mqzDownloadPics);
+                QQHSwizzle(c, @selector(stopDownload),
+                           (IMP)&hook_mqzStop, (IMP *)&orig_mqzStop);
+            } else {
+                QQHPLog(@"MQZMutiplePicDownloader missing");
             }
         }
 
