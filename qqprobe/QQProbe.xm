@@ -1,4 +1,4 @@
-// QQProbe - read-only probe
+﻿// QQProbe - read-only probe
 //
 // Dumps the ObjC runtime of the QQ process so we can build the
 // "QQHelper feature -> QQ 6.2 class name" mapping.
@@ -130,7 +130,9 @@ static void QQProbeSchedule(void) {
     }
 }
 
-%ctor {
+// Plain clang has no Logos, so %ctor becomes a real constructor function.
+__attribute__((constructor))
+static void QQProbeInit(void) {
     @autoreleasepool {
         NSLog(@"[QQProbe] LOADED into %@", [[NSBundle mainBundle] bundleIdentifier]);
         QQProbeSchedule();
