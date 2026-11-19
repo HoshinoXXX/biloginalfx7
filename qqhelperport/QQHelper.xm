@@ -278,18 +278,18 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
 // ---- 9.1 等级：UserSummaryQQLevelCell -setQQLevel: ----
 // 这是资料卡里那个显示 QQ 等级的格子。参数可能是 NSNumber 或自定义对象，
 // 所以先看类型：是 NSNumber 就替换成设定值，否则只记录。
-static void (*orig_setQQLevel)(id, SEL, id);
-static void hook_setQQLevel(id self, SEL _cmd, id lv) {
-    if (QQHOn(@"Switchqqdjxg", NO) && lv != nil) {
+// 实测 enc = v12@0:4i8 —— 参数是 int，不是对象。
+// 早先写成 id 并调用 isKindOfClass:，等于把整数当指针发消息，会直接崩。
+static void (*orig_setQQLevel)(id, SEL, int);
+static void hook_setQQLevel(id self, SEL _cmd, int lv) {
+    if (QQHOn(@"Switchqqdjxg", NO)) {
         NSString *s = QQHStringPref(@"djxg");
-        if ([s length] > 0 && [lv isKindOfClass:[NSNumber class]]) {
+        if ([s length] > 0) {
             int v = [s intValue];
-            if (v > 0) {
-                QQHPLog(@"[fired] setQQLevel %@ -> %d", lv, v);
-                lv = [NSNumber numberWithInt:v];
+            if (v > 0 && v != lv) {
+                QQHPLog(@"[fired] setQQLevel %d -> %d", lv, v);
+                lv = v;
             }
-        } else if ([s length] > 0) {
-            QQHPLog(@"[level] setQQLevel arg class = %@", NSStringFromClass([lv class]));
         }
     }
     if (orig_setQQLevel) orig_setQQLevel(self, _cmd, lv);
