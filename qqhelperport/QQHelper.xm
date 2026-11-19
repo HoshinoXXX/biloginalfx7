@@ -52,6 +52,16 @@ static void QQHPLog(NSString *fmt, ...) {
 
 // 读取原版 QQHelper 设置面板里的开关（默认值取自它的 plist）。
 // 另外支持 /tmp/qqhelper-off 全局停用，以及 /tmp/qqh-no-<key> 单独停用。
+// 所有诊断输出都走这个开关：默认关闭，/tmp/qqhelper-debug 存在时开启。
+static BOOL QQHDebugOn(void) {
+    static int cached = -1;
+    if (cached < 0) {
+        cached = [[NSFileManager defaultManager]
+                  fileExistsAtPath:@"/tmp/qqhelper-debug"] ? 1 : 0;
+    }
+    return cached == 1;
+}
+
 static BOOL QQHOn(NSString *key, BOOL defaultValue) {
     NSFileManager *fm = [NSFileManager defaultManager];
     if ([fm fileExistsAtPath:@"/tmp/qqhelper-off"]) return NO;
@@ -347,7 +357,7 @@ static id hook_connInitStart(id self, SEL _cmd, id req, id delegate, BOOL startN
     QQHNoteImageURL([u absoluteString], "conn.init+start");
 
     // 关键一步：把 t=5（WebP）改成 t=0（JPEG），否则 iOS 10 解不出来
-    if (QQHOn(@"qzpic", YES) && u != nil &&
+    if (QQHOn(@"qzpic", YES) && QQHDebugOn() && u != nil &&
         [req isKindOfClass:[NSMutableURLRequest class]]) {
         NSString *fixed = QQHForceJPEG([u absoluteString]);
         if (![fixed isEqualToString:[u absoluteString]]) {
@@ -363,19 +373,19 @@ static id hook_connInitStart(id self, SEL _cmd, id req, id delegate, BOOL startN
 // 图片既不走 NSURLSession 也不走 BDH，而是走它。
 static id (*orig_mqzGetByURL)(id, SEL, id);
 static id hook_mqzGetByURL(id self, SEL _cmd, id url) {
-    QQHPLog(@"[mqz] getMessageModelByURL: %@", url);
+    if (QQHDebugOn()) QQHPLog(@"[mqz] getMessageModelByURL: %@", url);
     return orig_mqzGetByURL ? orig_mqzGetByURL(self, _cmd, url) : nil;
 }
 
 static void (*orig_mqzDownloadPics)(id, SEL, id, id);
 static void hook_mqzDownloadPics(id self, SEL _cmd, id model, id completion) {
-    QQHPLog(@"[mqz] downloadPicsByMessageModel: %@", model);
+    if (QQHDebugOn()) QQHPLog(@"[mqz] downloadPicsByMessageModel: %@", model);
     if (orig_mqzDownloadPics) orig_mqzDownloadPics(self, _cmd, model, completion);
 }
 
 static void (*orig_mqzStop)(id, SEL);
 static void hook_mqzStop(id self, SEL _cmd) {
-    QQHPLog(@"[mqz] stopDownload");
+    if (QQHDebugOn()) QQHPLog(@"[mqz] stopDownload");
     if (orig_mqzStop) orig_mqzStop(self, _cmd);
 }
 
@@ -385,7 +395,7 @@ static void hook_mqzStop(id self, SEL _cmd) {
 // 这里先只打日志，看清连的哪台主机、fileId 是什么、失败时错误码多少。
 static id (*orig_bdhInitHost)(id, SEL, id);
 static id hook_bdhInitHost(id self, SEL _cmd, id host) {
-    QQHPLog(@"[bdh] connect host=%@", host);
+    if (QQHDebugOn()) QQHPLog(@"[bdh] connect host=%@", host);
     return orig_bdhInitHost ? orig_bdhInitHost(self, _cmd, host) : nil;
 }
 
@@ -393,27 +403,27 @@ static id hook_bdhInitHost(id self, SEL _cmd, id host) {
 static long long (*orig_picFileId)(id, SEL);
 static long long hook_picFileId(id self, SEL _cmd) {
     long long r = orig_picFileId ? orig_picFileId(self, _cmd) : 0;
-    QQHPLog(@"[bdh] pic fileId=%lld", r);
+    if (QQHDebugOn()) QQHPLog(@"[bdh] pic fileId=%lld", r);
     return r;
 }
 
 static void (*orig_notifyHttpError)(id, SEL, id);
 static void hook_notifyHttpError(id self, SEL _cmd, id err) {
-    QQHPLog(@"[bdh] HTTP ERROR: %@", err);
+    if (QQHDebugOn()) QQHPLog(@"[bdh] HTTP ERROR: %@", err);
     if (orig_notifyHttpError) orig_notifyHttpError(self, _cmd, err);
 }
 
 // 实测 enc = v12@0:4@8 —— 参数是对象。
 static void (*orig_setHttpError)(id, SEL, id);
 static void hook_setHttpError(id self, SEL _cmd, id code) {
-    QQHPLog(@"[bdh] httpError=%@", code);
+    if (QQHDebugOn()) QQHPLog(@"[bdh] httpError=%@", code);
     if (orig_setHttpError) orig_setHttpError(self, _cmd, code);
 }
 
 static int (*orig_iStatusCode)(id, SEL);
 static int hook_iStatusCode(id self, SEL _cmd) {
     int r = orig_iStatusCode ? orig_iStatusCode(self, _cmd) : 0;
-    if (r != 0) QQHPLog(@"[bdh] statusCode=%d", r);
+    if (r != 0) if (QQHDebugOn()) QQHPLog(@"[bdh] statusCode=%d", r);
     return r;
 }
 
@@ -476,6 +486,7 @@ static void hook_setDetailText(id self, SEL _cmd) {
 // ---- 9.3 广告诊断：打印 feed model 的内容 ----
 static int QQHFeedModelDump = 0;
 static void QQHNoteModelDetail(id model) {
+    if (!QQHDebugOn()) return;
     if (model == nil) return;
     if (QQHFeedModelDump >= 3) return;
     QQHFeedModelDump++;
@@ -816,6 +827,7 @@ static id hook_formatQd(Class self, SEL _cmd, int raw) {
 // 方便确认到底请求的是哪个地址、卡在哪。
 static void QQHNoteImageURL(NSString *s, const char *via) {
     if (s == nil) return;
+    if (!QQHDebugOn()) return;
     if ([s rangeOfString:@"qpic"].location == NSNotFound &&
         [s rangeOfString:@"qlogo"].location == NSNotFound &&
         [s rangeOfString:@"gtimg"].location == NSNotFound &&
@@ -831,7 +843,7 @@ static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
     QQHNoteImageURL(s, via);
     url = QQHRepairURL(url);          // 群成员列表 / 视频修复
     s = [url absoluteString];
-    if (QQHOn(@"qzpic", YES)) {
+    if (QQHOn(@"qzpic", YES) && QQHDebugOn()) {
         NSString *jpeg = QQHForceJPEG(s);
         if (![jpeg isEqualToString:s]) {
             NSURL *nu = [NSURL URLWithString:jpeg];
@@ -944,6 +956,7 @@ static void QQHDumpPrefs(void) {
 // ---------------- 广告 cell 诊断：打印动态列表里的真实类名 ----------------
 static int QQHCellLogCount = 0;
 static void QQHNoteCell(id cell) {
+    if (!QQHDebugOn()) return;
     if (QQHCellLogCount >= 40) return;
     QQHCellLogCount++;
     QQHPLog(@"[cell] %@", NSStringFromClass([cell class]));
@@ -953,6 +966,7 @@ static void QQHNoteCell(id cell) {
 // 只能看喂进来的数据模型是什么类型。
 static int QQHModelLogCount = 0;
 static void QQHNoteModel(id model) {
+    if (!QQHDebugOn()) return;
     if (model == nil) return;
     if (QQHModelLogCount >= 60) return;
     QQHModelLogCount++;
