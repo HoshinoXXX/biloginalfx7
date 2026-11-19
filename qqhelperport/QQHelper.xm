@@ -263,6 +263,64 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
 }
 
+// ============ 7. 365 点赞 / 伪装群管理 / 强开红包（默认关闭）============
+
+// ---- 7.1 伪装 QQ 群管理：wzqqqgl ----
+// 成员资料卡里判断「我是不是群主/管理员」的唯一入口。
+static BOOL (*orig_isGroupOwnerOrAdmin)(id, SEL);
+static BOOL hook_isGroupOwnerOrAdmin(id self, SEL _cmd) {
+    if (QQHOn(@"wzqqqgl", NO)) {
+        QQHPLog(@"[fired] pretend group owner/admin");
+        return YES;
+    }
+    return orig_isGroupOwnerOrAdmin ? orig_isGroupOwnerOrAdmin(self, _cmd) : NO;
+}
+
+// ---- 7.2 365 一键点赞：zan365 ----
+// 参数全是标量（zanType:int, andIfNoted:BOOL, increaseNum:int），无结构体，
+// 所以即使类型稍有偏差也不会像 CGRect 那样写坏调用者的栈。
+static void (*orig_updateZan)(id, SEL, int, int, BOOL, int);
+static void hook_updateZan(id self, SEL _cmd, int type, int zanType,
+                           BOOL noted, int inc) {
+    if (orig_updateZan) orig_updateZan(self, _cmd, type, zanType, noted, inc);
+    if (!QQHOn(@"zan365", NO)) return;
+    if (noted) return;                     // 已经赞过就不重复
+    QQHPLog(@"[fired] 365 auto like scheduled");
+    // 走按钮自己的点击链路，最接近用户手动点一下
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        @try {
+            if ([self isKindOfClass:[UIControl class]]) {
+                [(UIControl *)self sendActionsForControlEvents:
+                    UIControlEventTouchUpInside];
+            } else if ([self respondsToSelector:@selector(clickZan)]) {
+                [self performSelector:@selector(clickZan)];
+            }
+        } @catch (NSException *e) {
+            QQHPLog(@"zan exception: %@", e);
+        }
+    });
+}
+
+// ---- 7.3 强开红包：redpack ----
+// 红包消息气泡拿到数据后，主动触发它自己的「打开」回调。
+static void (*orig_setRedEnvelopeInfo)(id, SEL, id);
+static void hook_setRedEnvelopeInfo(id self, SEL _cmd, id info) {
+    if (orig_setRedEnvelopeInfo) orig_setRedEnvelopeInfo(self, _cmd, info);
+    if (!QQHOn(@"redpack", NO)) return;
+    QQHPLog(@"[fired] red packet auto open scheduled");
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        @try {
+            if ([self respondsToSelector:@selector(openDetailButtonDidTap:)]) {
+                [self performSelector:@selector(openDetailButtonDidTap:) withObject:nil];
+            }
+        } @catch (NSException *e) {
+            QQHPLog(@"redpack exception: %@", e);
+        }
+    });
+}
+
 // ============ 6. 净化类功能（全部默认关闭）============
 // 这些功能按用户要求「做出来但默认不打开」，用原面板已有的开关 key。
 
@@ -752,6 +810,26 @@ static void QQHInit(void) {
             if (c != Nil)
                 QQHSwizzle(c, @selector(hasBubbleResource:),
                            (IMP)&hook_hasBubbleResource, (IMP *)&orig_hasBubbleResource);
+        }
+
+        // 7. 365 点赞 / 伪装群管理 / 强开红包
+        {
+            Class vc = NSClassFromString(@"QQGroupMemberCardViewController");
+            if (vc != Nil)
+                QQHSwizzle(vc, @selector(isGroupOwnerOrAdministrator:),
+                           (IMP)&hook_isGroupOwnerOrAdmin,
+                           (IMP *)&orig_isGroupOwnerOrAdmin);
+
+            Class zan = NSClassFromString(@"UserSummaryZanButton");
+            if (zan != Nil)
+                QQHSwizzle(zan, @selector(updateZanType:zanType:andIfNoted:increaseNum:),
+                           (IMP)&hook_updateZan, (IMP *)&orig_updateZan);
+
+            Class rp = NSClassFromString(@"QQWalletRedEnvelopeAIOMsgView");
+            if (rp != Nil)
+                QQHSwizzle(rp, @selector(setRedEnvelopeInfo:),
+                           (IMP)&hook_setRedEnvelopeInfo,
+                           (IMP *)&orig_setRedEnvelopeInfo);
         }
 
         QQHDumpPrefs();
