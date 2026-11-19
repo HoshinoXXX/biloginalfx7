@@ -2,10 +2,10 @@ Package: apt.cydiakk.qqhelper
 Name: QQ Helper
 Version: 1.2.7
 Architecture: iphoneos-arm
-Description: QQ Helper rebuilt for QQ 6.2. Keeps the original settings panel, so its switches control this implementation. Adds a working Recall entry on long-press (including bypassing the local two-minute check), keeps message anti-revoke, and adds Qzone ad removal. The QQ8-only cleanup features are intentionally omitted because QQ 6.2 does not have those elements.
+Description: QQ Helper for QQ 4.7.2 / 5.7 / 5.9 / 6.2 on iOS 5 through 10. One source with runtime class detection, so each version hooks only what exists. Recall and anti-revoke need QQ 5.9 or newer; 4.7.2 ships without recall at all.
 Maintainer: Netskao
 Author: Netskao
 Section: Tweaks
-Depends: mobilesubstrate, firmware (>= 7.0), preferenceloader
+Depends: mobilesubstrate, firmware (>= 5.0), preferenceloader
 Replaces: apt.cydiakk.qqhelper (<< 1.2.7)
 Provides: apt.cydiakk.qqhelper (= 1.2.7)
