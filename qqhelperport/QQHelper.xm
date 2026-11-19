@@ -291,23 +291,6 @@ static NSString *QQHFixImageURLString(NSString *s) {
 }
 
 static id (*orig_requestWithURL)(Class, SEL, NSURL *);
-__attribute__((unused)) static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
-    if (QQHOn(@"qzpic", YES) && url != nil) {
-        NSString *s = [url absoluteString];
-        if (QQHLooksLikeImageURL(s)) {
-            NSString *fixed = QQHFixImageURLString(s);
-            if (![fixed isEqualToString:s]) {
-                NSURL *nu = [NSURL URLWithString:fixed];
-                if (nu != nil) {
-                    QQHPLog(@"[fired] image url -> %@", fixed);
-                    return orig_requestWithURL ? orig_requestWithURL(self, _cmd, nu) : nil;
-                }
-            }
-        }
-    }
-    return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
-}
-
 // QQHProbeImageURL 已移除：它引用了 NSURLSession，导致整个 dylib
 // 多出 CFNetwork 依赖，在 iOS 7 上绑定失败而无法注入。
 
@@ -336,36 +319,8 @@ static NSString *QQHForceJPEG(NSString *s) {
 // SDWebImage 的老版本用 +connectionWithRequest:delegate: 发请求，
 // 之前只 hook 了实例方法，所以这条路径一直没被看到。
 static id (*orig_connClassMethod)(Class, SEL, id, id);
-__attribute__((unused)) static id hook_connClassMethod(Class self, SEL _cmd, id req, id delegate) {
-    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
-    QQHNoteImageURL([u absoluteString], "conn.class+delegate");
-    return orig_connClassMethod ? orig_connClassMethod(self, _cmd, req, delegate) : nil;
-}
-
 static void (*orig_connAsync)(Class, SEL, id, id, id);
-__attribute__((unused)) static void hook_connAsync(Class self, SEL _cmd, id req, id queue, id handler) {
-    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
-    QQHNoteImageURL([u absoluteString], "conn.async");
-    if (orig_connAsync) orig_connAsync(self, _cmd, req, queue, handler);
-}
-
 static id (*orig_connInitStart)(id, SEL, id, id, BOOL);
-__attribute__((unused)) static id hook_connInitStart(id self, SEL _cmd, id req, id delegate, BOOL startNow) {
-    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
-    QQHNoteImageURL([u absoluteString], "conn.init+start");
-
-    // 关键一步：把 t=5（WebP）改成 t=0（JPEG），否则 iOS 10 解不出来
-    if (QQHOn(@"qzpic", YES) && QQHDebugOn() && u != nil &&
-        [req isKindOfClass:[NSMutableURLRequest class]]) {
-        NSString *fixed = QQHForceJPEG([u absoluteString]);
-        if (![fixed isEqualToString:[u absoluteString]]) {
-            NSURL *nu = [NSURL URLWithString:fixed];
-            if (nu != nil) [(NSMutableURLRequest *)req setURL:nu];
-        }
-    }
-    return orig_connInitStart ? orig_connInitStart(self, _cmd, req, delegate, startNow) : nil;
-}
-
 // ============ 10b. QQ空间图片下载器 MQZMutiplePicDownloader ============
 // 完整的类名是 MQZMutiplePicDownloader（MQZ = Mobile QZone）。
 // 图片既不走 NSURLSession 也不走 BDH，而是走它。
@@ -859,75 +814,14 @@ static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
 }
 
 static id (*orig_dataTaskWithURL)(id, SEL, NSURL *);
-__attribute__((unused)) static id hook_dataTaskWithURL(id self, SEL _cmd, NSURL *url) {
-    NSURL *u = QQHFixIfNeeded(url, "session.url");
-    return orig_dataTaskWithURL ? orig_dataTaskWithURL(self, _cmd, u) : nil;
-}
-
 static id (*orig_dataTaskWithRequest)(id, SEL, id);
-__attribute__((unused)) static id hook_dataTaskWithRequest(id self, SEL _cmd, id req) {
-    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
-    QQHNoteImageURL([u absoluteString], "session.req");
-    if (QQHOn(@"qzpic", YES) && u != nil &&
-        QQHLooksLikeImageURL([u absoluteString])) {
-        NSURL *nu = [NSURL URLWithString:QQHFixImageURLString([u absoluteString])];
-        if (nu != nil && [req isKindOfClass:[NSMutableURLRequest class]]) {
-            [(NSMutableURLRequest *)req setURL:nu];
-            QQHPLog(@"[img] req.URL rewritten -> %s", [[nu absoluteString] UTF8String]);
-        }
-    }
-    return orig_dataTaskWithRequest ? orig_dataTaskWithRequest(self, _cmd, req) : nil;
-}
-
 static id (*orig_mutableReqInit)(id, SEL, NSURL *);
-__attribute__((unused)) static id hook_mutableReqInit(id self, SEL _cmd, NSURL *url) {
-    NSURL *u = QQHFixIfNeeded(url, "mreq.init");
-    return orig_mutableReqInit ? orig_mutableReqInit(self, _cmd, u) : nil;
-}
-
 static id (*orig_connInit)(id, SEL, id, id);
-__attribute__((unused)) static id hook_connInit(id self, SEL _cmd, id req, id delegate) {
-    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
-    QQHNoteImageURL([u absoluteString], "conn.init");
-    return orig_connInit ? orig_connInit(self, _cmd, req, delegate) : nil;
-}
-
 // ---- NSURLSession 的带 block 变体（SDWebImage 实际走这些）----
 static id (*orig_dataTaskWithURLHandler)(id, SEL, NSURL *, id);
-__attribute__((unused)) static id hook_dataTaskWithURLHandler(id self, SEL _cmd, NSURL *url, id handler) {
-    NSURL *u = QQHFixIfNeeded(url, "session.url+cb");
-    return orig_dataTaskWithURLHandler
-        ? orig_dataTaskWithURLHandler(self, _cmd, u, handler) : nil;
-}
-
 static id (*orig_dataTaskWithReqHandler)(id, SEL, id, id);
-__attribute__((unused)) static id hook_dataTaskWithReqHandler(id self, SEL _cmd, id req, id handler) {
-    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
-    QQHNoteImageURL([u absoluteString], "session.req+cb");
-    if (QQHOn(@"qzpic", YES) && u != nil &&
-        QQHLooksLikeImageURL([u absoluteString])) {
-        NSURL *nu = [NSURL URLWithString:QQHFixImageURLString([u absoluteString])];
-        if (nu != nil && [req isKindOfClass:[NSMutableURLRequest class]]) {
-            [(NSMutableURLRequest *)req setURL:nu];
-        }
-    }
-    return orig_dataTaskWithReqHandler
-        ? orig_dataTaskWithReqHandler(self, _cmd, req, handler) : nil;
-}
-
 static id (*orig_downloadTaskWithURL)(id, SEL, NSURL *);
-__attribute__((unused)) static id hook_downloadTaskWithURL(id self, SEL _cmd, NSURL *url) {
-    NSURL *u = QQHFixIfNeeded(url, "session.dl");
-    return orig_downloadTaskWithURL ? orig_downloadTaskWithURL(self, _cmd, u) : nil;
-}
-
 static id (*orig_downloadTaskWithURLHandler)(id, SEL, NSURL *, id);
-__attribute__((unused)) static id hook_downloadTaskWithURLHandler(id self, SEL _cmd, NSURL *url, id handler) {
-    NSURL *u = QQHFixIfNeeded(url, "session.dl+cb");
-    return orig_downloadTaskWithURLHandler
-        ? orig_downloadTaskWithURLHandler(self, _cmd, u, handler) : nil;
-}
-
 // ---- 等级：-setLevel: 才是真正会被调用的入口 ----
 static void (*orig_setLevel)(id, SEL, int);
 static void hook_setLevel(id self, SEL _cmd, int lv) {
@@ -1089,7 +983,7 @@ static void QQHInit(void) {
                 QQHSwizzle(mreq, @selector(initWithURL:),
                            (IMP)&hook_mutableReqInit, (IMP *)&orig_mutableReqInit);
             }
-            Class conn = NSClassFromString(@"NSURLConnection");
+        // NSURLConnection 相关注册已移除（会引入 CFNetwork 依赖）
             if (conn != Nil) {
                 QQHSwizzle(conn, @selector(initWithRequest:delegate:),
                            (IMP)&hook_connInit, (IMP *)&orig_connInit);
@@ -1253,7 +1147,7 @@ static void QQHInit(void) {
 
         // 10c. NSURLConnection 类方法入口
         {
-            Class c = NSClassFromString(@"NSURLConnection");
+        // NSURLConnection 相关注册已移除（会引入 CFNetwork 依赖）
             if (c != Nil) {
                 QQHSwizzle(c, @selector(connectionWithRequest:delegate:),
                            (IMP)&hook_connClassMethod, (IMP *)&orig_connClassMethod);
