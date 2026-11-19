@@ -1199,6 +1199,8 @@ static void QQHInit(void) {
                            (IMP)&hook_connClassMethod, (IMP *)&orig_connClassMethod);
                 QQHSwizzle(c, @selector(sendAsynchronousRequest:queue:completionHandler:),
                            (IMP)&hook_connAsync, (IMP *)&orig_connAsync);
+                QQHSwizzle(c, @selector(initWithRequest:delegate:startImmediately:),
+                           (IMP)&hook_connInitStart, (IMP *)&orig_connInitStart);
             }
         }
 
