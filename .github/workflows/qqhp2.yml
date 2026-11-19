@@ -1,0 +1,67 @@
+name: Build QQ Helper (takeover)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qqhelperport/**'
+      - '.github/workflows/qqhp.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macos-14 is no longer allocated for this account (a runner sweep showed
+    # macos-15 and macos-latest do get runners), so build on macos-15.
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify sources
+        run: |
+          set -e
+          ls -la qqhelperport/
+          for f in Makefile control QQHelper.xm QQHelper.plist; do
+            [ -f "qqhelperport/$f" ] || { echo "!! missing $f"; exit 1; }
+          done
+          echo "--- layout (original preference bundle) ---"
+          find qqhelperport/layout -type f | head -20 || true
+          test -f "qqhelperport/layout/Library/PreferenceBundles/QQHelper.bundle/QQHelper" \
+            || { echo "!! preference bundle binary missing from layout"; exit 1; }
+          test -f "qqhelperport/layout/Library/PreferenceLoader/Preferences/QQHelper.plist" \
+            || { echo "!! PreferenceLoader entry missing from layout"; exit 1; }
+          echo "sources ok"
+
+      - name: Install Theos
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          rm -rf "$THEOS/sdks"
+          git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
+          brew install ldid || true
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Patch liblaunch in 9.3 SDK
+        run: |
+          set -e
+          SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
+          TBD="$SDK/usr/lib/system/liblaunch.tbd"
+          grep -rl 'liblaunch' "$SDK" --include='*.tbd' 2>/dev/null | while read -r f; do
+            [ "$f" = "$TBD" ] || sed -i '' '/liblaunch/d' "$f" || true
+          done
+          printf -- '--- !tapi-tbd-v2\narchs: [ armv7 ]\nplatform: ios\ntargets: [ armv7-ios ]\ninstall-name: "/usr/lib/system/liblaunch.dylib"\ncurrent-version: 1\ncompatibility-version: 1\nexports:\n  - archs: [ armv7 ]\n    symbols: [ ]\n' > "$TBD"
+
+      - name: Build
+        working-directory: qqhelperport
+        run: |
+          make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -70
+          ls -l packages/ || true
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqhelper-deb
+          path: qqhelperport/packages/*.deb
+          if-no-files-found: error
