@@ -36,7 +36,31 @@ static void QQHPLog(NSString *fmt, ...) {
     NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
     NSLog(@"[QQH] %@", s);
-    NSString *path = @"/tmp/qqhelper.log";
+    // iOS 7 的沙盒不允许 App 写 /tmp，所以按顺序找一个能写的路径并记住它。
+    static NSString *chosenPath = nil;
+    if (chosenPath == nil) {
+        NSMutableArray *cands = [NSMutableArray array];
+        [cands addObject:@"/tmp/qqhelper.log"];
+        NSString *home = NSHomeDirectory();
+        if (home) {
+            [cands addObject:[home stringByAppendingPathComponent:@"Documents/qqhelper.log"]];
+            [cands addObject:[home stringByAppendingPathComponent:@"Library/qqhelper.log"]];
+            [cands addObject:[home stringByAppendingPathComponent:@"qqhelper.log"]];
+        }
+        NSFileManager *fm = [NSFileManager defaultManager];
+        for (NSString *c in cands) {
+            if ([fm createFileAtPath:c contents:nil attributes:nil]) {
+                chosenPath = c;
+                break;
+            }
+            if ([fm fileExistsAtPath:c]) {   // 已存在也能用
+                chosenPath = c;
+                break;
+            }
+        }
+        if (chosenPath == nil) chosenPath = @"/tmp/qqhelper.log";
+    }
+    NSString *path = chosenPath;
     NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
     if (fh == nil) {
         [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
