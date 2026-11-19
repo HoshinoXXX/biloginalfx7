@@ -24,6 +24,10 @@
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <UIKit/UIKit.h>
+#include <sys/types.h>
+#include <sys/sysctl.h>
+#include <ifaddrs.h>
+#include <net/if.h>
 
 // ------------------------------------------------------------------ 日志
 static void QQHPLog(NSString *fmt, ...) {
@@ -261,6 +265,87 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
         }
     }
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
+}
+
+// ============ 8. 在线显示具体机型 + 网络（onlinemodel，默认关闭）============
+// 老版 QQ 的在线状态是「iPhone 6 Plus 4G在线」，6.2 只剩「手机WiFi在线」。
+// RichStateModel 的 -getPlainText / -briefText 是文案出口，回传 NSString，安全。
+
+// 机型标识，例如 iPhone6,2
+static NSString *QQHMachineID(void) {
+    size_t size = 0;
+    if (sysctlbyname("hw.machine", NULL, &size, NULL, 0) != 0 || size == 0) return nil;
+    char *buf = malloc(size);
+    if (buf == NULL) return nil;
+    NSString *out = nil;
+    if (sysctlbyname("hw.machine", buf, &size, NULL, 0) == 0) {
+        out = [NSString stringWithUTF8String:buf];
+    }
+    free(buf);
+    return out;
+}
+
+// 把内部标识映射成用户看得懂的名字（只列常见机型，其余原样显示）
+static NSString *QQHFriendlyModel(NSString *machine) {
+    if ([machine length] == 0) return machine;
+    static NSDictionary *map = nil;
+    if (map == nil) {
+        map = @{
+            @"iPhone5,1": @"iPhone 5",  @"iPhone5,2": @"iPhone 5",
+            @"iPhone5,3": @"iPhone 5c", @"iPhone5,4": @"iPhone 5c",
+            @"iPhone6,1": @"iPhone 5s", @"iPhone6,2": @"iPhone 5s",
+            @"iPhone7,1": @"iPhone 6 Plus", @"iPhone7,2": @"iPhone 6",
+            @"iPhone8,1": @"iPhone 6s", @"iPhone8,2": @"iPhone 6s Plus",
+            @"iPhone8,4": @"iPhone SE",
+            @"iPhone9,1": @"iPhone 7",  @"iPhone9,3": @"iPhone 7",
+            @"iPhone9,2": @"iPhone 7 Plus", @"iPhone9,4": @"iPhone 7 Plus",
+            @"iPhone10,1": @"iPhone 8", @"iPhone10,4": @"iPhone 8",
+            @"iPhone10,2": @"iPhone 8 Plus", @"iPhone10,5": @"iPhone 8 Plus",
+            @"iPhone10,3": @"iPhone X", @"iPhone10,6": @"iPhone X",
+        };
+    }
+    NSString *nice = [map objectForKey:machine];
+    return nice ?: machine;
+}
+
+// 当前网络类型
+static NSString *QQHNetworkName(void) {
+    struct ifaddrs *list = NULL;
+    if (getifaddrs(&list) != 0 || list == NULL) return @"在线";
+    BOOL hasWiFi = NO;
+    BOOL hasCell = NO;
+    for (struct ifaddrs *p = list; p != NULL; p = p->ifa_next) {
+        if (p->ifa_addr == NULL) continue;
+        if (p->ifa_addr->sa_family != AF_INET) continue;
+        if (strcmp(p->ifa_name, "en0") == 0) hasWiFi = YES;
+        if (strncmp(p->ifa_name, "pdp_ip", 6) == 0) hasCell = YES;
+    }
+    freeifaddrs(list);
+    if (hasWiFi) return @"WiFi在线";
+    if (hasCell) return @"4G在线";
+    return @"在线";
+}
+
+static NSString *QQHOnlineText(void) {
+    NSString *model = QQHFriendlyModel(QQHMachineID());
+    if ([model length] == 0) model = @"iPhone";
+    return [NSString stringWithFormat:@"%@ %@", model, QQHNetworkName()];
+}
+
+static id (*orig_richPlainText)(id, SEL);
+static id hook_richPlainText(id self, SEL _cmd) {
+    if (QQHOn(@"onlinemodel", NO)) {
+        NSString *mine = QQHOnlineText();
+        QQHPLog(@"[fired] online text -> %@", mine);
+        return mine;
+    }
+    return orig_richPlainText ? orig_richPlainText(self, _cmd) : nil;
+}
+
+static id (*orig_richBriefText)(id, SEL);
+static id hook_richBriefText(id self, SEL _cmd) {
+    if (QQHOn(@"onlinemodel", NO)) return QQHOnlineText();
+    return orig_richBriefText ? orig_richBriefText(self, _cmd) : nil;
 }
 
 // ============ 7. 365 点赞 / 伪装群管理 / 强开红包（默认关闭）============
@@ -830,6 +915,22 @@ static void QQHInit(void) {
                 QQHSwizzle(rp, @selector(setRedEnvelopeInfo:),
                            (IMP)&hook_setRedEnvelopeInfo,
                            (IMP *)&orig_setRedEnvelopeInfo);
+        }
+
+        // 8. 在线显示机型 + 网络
+        {
+            Class rs = NSClassFromString(@"RichStateModel");
+            if (rs != Nil) {
+                QQHSwizzle(rs, @selector(getPlainText),
+                           (IMP)&hook_richPlainText, (IMP *)&orig_richPlainText);
+                QQHSwizzle(rs, @selector(briefText),
+                           (IMP)&hook_richBriefText, (IMP *)&orig_richBriefText);
+            } else {
+                QQHPLog(@"RichStateModel missing");
+            }
+            // 设备名与网络只在开关打开时才算，避免每次启动多做无用功
+            if (QQHOn(@"onlinemodel", NO))
+                QQHPLog(@"online model preview: %@", QQHOnlineText());
         }
 
         QQHDumpPrefs();
