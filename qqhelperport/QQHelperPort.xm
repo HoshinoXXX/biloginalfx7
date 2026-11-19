@@ -1,38 +1,37 @@
-// QQHelperPort - QQHelper features ported to QQ 6.2
+// QQHelperPort - QQHelper 的完整功能移植到 QQ 6.2
 //
-// Based on an ObjC runtime dump from the running QQ 6.2 (iPhone 5c / iOS 10.3.4,
-// 24,242 classes, method lists for 3,606 classes).
+// 依据：从运行中的 QQ 6.2（iPhone 5c / iOS 10.3.4）dump 出的 ObjC 运行时清单
+// （24,245 个类，3,606 个类的方法表）。
 //
-// ============================ HARD-WON RULES ============================
-// 1. NEVER hook a struct-returning method directly. On armv7 a 16-byte struct
-//    (CGRect) comes back through a hidden sret pointer; declaring it as
-//    `CGRect (id, SEL)` smashed the caller's stack and crashed QQ with
-//    EXC_BAD_ACCESS at 0x1e0. Use object-returning or void methods instead
-//    (`avatarPendantID` -> nil is the safe way to kill pendants).
-// 2. NEVER hide a UITableView cell to "remove" it. Hiding QQAIOTimeCell (the
-//    chat section header) collapsed the whole message table, so no messages
-//    rendered at all. The timestamp feature is therefore dropped.
-// 3. Kill switches must EARLY-RETURN when disabled, not gate the action with
-//    a negated helper - the first build had that inverted, so the switches did
-//    nothing.
-// ========================================================================
+// ============================ 三条铁律 ============================
+// 1. 绝不 hook 返回结构体的方法。armv7 上 16 字节的 CGRect 走隐藏 sret 指针，
+//    声明成 `CGRect (id, SEL)` 会写坏调用者栈 —— 已经因此崩过一次
+//    （EXC_BAD_ACCESS at 0x1e0）。用 setShouldShowAvatarPendant: /
+//    avatarPendantID 这类 void / 对象 方法来达成同样效果。
+//    注意：CGFloat(=float) 在 armv7 走寄存器返回，是安全的。
+// 2. 绝不用「隐藏表格 cell」来去掉东西。隐藏 QQAIOTimeCell（聊天分组表头）
+//    会让整个消息表塌掉，一条消息都不显示。
+// 3. 开关必须「早退」：if (QQHPOff(name)) { 调原方法; return; }
+//    第一版写成 !QQHPOn(name) 包裹动作，导致开关形同虚设。
+// ==================================================================
 //
-// Kill switches (create the file to disable that feature):
-//   /tmp/qqhp-off             everything
-//   /tmp/qqhp-no-recall       recall menu fix
-//   /tmp/qqhp-no-antirevoke   anti-revoke
-//   /tmp/qqhp-no-pendant      avatar pendant hiding
-//   /tmp/qqhp-no-font         custom font blocking
-//   /tmp/qqhp-no-weather      weather removal
-//   /tmp/qqhp-no-gift         gift animation blocking
-//   /tmp/qqhp-no-faceassoc    emoji suggestion blocking
-//   /tmp/qqhp-no-facestore    recommended emoji blocking
+// 开关（建立对应文件即关闭该功能）：
+//   /tmp/qqhp-off             全部
+//   /tmp/qqhp-no-recall       撤回按钮
+//   /tmp/qqhp-no-antirevoke   防撤回
+//   /tmp/qqhp-no-pendant      头像挂件
+//   /tmp/qqhp-no-font         个性/大小字体
+//   /tmp/qqhp-no-weather      天气
+//   /tmp/qqhp-no-gift         礼物动画
+//   /tmp/qqhp-no-faceassoc    表情联想
+//   /tmp/qqhp-no-facestore    推荐表情
+//   /tmp/qqhp-no-qzonead      QQ空间去广告
 
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <UIKit/UIKit.h>
 
-// ------------------------------------------------------------------ logging
+// ------------------------------------------------------------------ 日志
 static void QQHPLog(NSString *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
@@ -54,21 +53,22 @@ static void QQHPLog(NSString *fmt, ...) {
     }
 }
 
-// ------------------------------------------------------------- kill switches
-// Returns YES when the named feature is DISABLED.
 static BOOL QQHPOff(NSString *switchName) {
     if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/qqhp-off"]) return YES;
     return [[NSFileManager defaultManager]
             fileExistsAtPath:[@"/tmp" stringByAppendingPathComponent:switchName]];
 }
 
-// ===================== 1. Recall menu (QQRecallMenuFilter) =================
-// Eight class methods, encoding c12@0:4@8 = BOOL (Class, SEL, id).
+// ===================== 1. 撤回按钮：两道门禁 =====================
+// 门禁一：QQRecallMenuFilter 的 8 个类方法（按消息类型判断）
+// 门禁二：QQMessageRecallModule 的 -isInTowMinutes:（两分钟判定）
+//          这才是「消息在两分钟内却看不到撤回」的真正原因。
 #define QQHP_BOOL_HOOK(NAME)                                                  \
     static BOOL (*orig_##NAME)(Class, SEL, id);                               \
     static BOOL hook_##NAME(Class self, SEL _cmd, id arg) {                   \
         if (QQHPOff(@"qqhp-no-recall"))                                       \
             return orig_##NAME ? orig_##NAME(self, _cmd, arg) : NO;           \
+        QQHPLog(@"[fired] #NAME -> YES");                                     \
         return YES;                                                           \
     }
 
@@ -81,14 +81,22 @@ QQHP_BOOL_HOOK(isMarketFace)
 QQHP_BOOL_HOOK(isSM)
 QQHP_BOOL_HOOK(isShortVideo)
 
-// ==================== 2. Anti-revoke (QQMessageRecallModule) ==============
-//  -recvC2CRecallNotify:bufferLen:subcmd:isOnline:  v24@0:4r^v8i12i16c20
-//  -recvGroupRecallNotify:bufferLen:isOnline:       v20@0:4*8I12c16
-//  -recvDiscussRecallNotify:bufferLen:isOnline:     v20@0:4*8I12c16
+// 两分钟判定
+static BOOL (*orig_isInTowMinutes)(id, SEL, id);
+static BOOL hook_isInTowMinutes(id self, SEL _cmd, id msg) {
+    if (QQHPOff(@"qqhp-no-recall"))
+        return orig_isInTowMinutes ? orig_isInTowMinutes(self, _cmd, msg) : NO;
+    QQHPLog(@"[fired] isInTowMinutes -> YES");
+    return YES;
+}
+
+// ==================== 2. 防撤回 ====================
 static void (*orig_recvC2C)(id, SEL, void *, int, int, char);
 static void hook_recvC2C(id self, SEL _cmd, void *buf, int len, int subcmd, char online) {
     if (QQHPOff(@"qqhp-no-antirevoke")) {
         if (orig_recvC2C) orig_recvC2C(self, _cmd, buf, len, subcmd, online);
+    } else {
+        QQHPLog(@"[fired] recvC2C swallowed");
     }
 }
 
@@ -96,6 +104,8 @@ static void (*orig_recvGroup)(id, SEL, void *, unsigned int, char);
 static void hook_recvGroup(id self, SEL _cmd, void *buf, unsigned int len, char online) {
     if (QQHPOff(@"qqhp-no-antirevoke")) {
         if (orig_recvGroup) orig_recvGroup(self, _cmd, buf, len, online);
+    } else {
+        QQHPLog(@"[fired] recvGroup swallowed");
     }
 }
 
@@ -103,11 +113,12 @@ static void (*orig_recvDiscuss)(id, SEL, void *, unsigned int, char);
 static void hook_recvDiscuss(id self, SEL _cmd, void *buf, unsigned int len, char online) {
     if (QQHPOff(@"qqhp-no-antirevoke")) {
         if (orig_recvDiscuss) orig_recvDiscuss(self, _cmd, buf, len, online);
+    } else {
+        QQHPLog(@"[fired] recvDiscuss swallowed");
     }
 }
 
-// ================== 3. Avatar pendant (QQAvatarView) =====================
-// Object-returning and void methods only - never the CGRect one.
+// ================== 3. 头像挂件 ==================
 static void (*orig_setShouldShowPendant)(id, SEL, BOOL);
 static void hook_setShouldShowPendant(id self, SEL _cmd, BOOL show) {
     if (QQHPOff(@"qqhp-no-pendant")) {
@@ -131,39 +142,36 @@ static BOOL hook_shouldShowPendant(id self, SEL _cmd) {
     return NO;
 }
 
-// ================== 4. Custom font (QQAIOFontManager) ====================
-// All four return UIFont (object) - replace with the system font.
-static UIFont *QQHPSystemFont(CGFloat size) {
+// ================== 4. 个性 / 大小字体 ==================
+static UIFont *QQHPSysFont(CGFloat size) {
     return [UIFont systemFontOfSize:(size > 0 ? size : 16.0)];
 }
 
 static UIFont *(*orig_aioTextFont)(id, SEL);
 static UIFont *hook_aioTextFont(id self, SEL _cmd) {
     if (QQHPOff(@"qqhp-no-font")) return orig_aioTextFont ? orig_aioTextFont(self, _cmd) : nil;
-    return QQHPSystemFont(16.0);
+    return QQHPSysFont(16.0);
 }
 
 static UIFont *(*orig_aioNickFont)(id, SEL);
 static UIFont *hook_aioNickFont(id self, SEL _cmd) {
     if (QQHPOff(@"qqhp-no-font")) return orig_aioNickFont ? orig_aioNickFont(self, _cmd) : nil;
-    return QQHPSystemFont(13.0);
+    return QQHPSysFont(13.0);
 }
 
 static UIFont *(*orig_aioTimeFont)(id, SEL);
 static UIFont *hook_aioTimeFont(id self, SEL _cmd) {
     if (QQHPOff(@"qqhp-no-font")) return orig_aioTimeFont ? orig_aioTimeFont(self, _cmd) : nil;
-    return QQHPSystemFont(11.0);
+    return QQHPSysFont(11.0);
 }
 
 static UIFont *(*orig_aioVideoFont)(id, SEL);
 static UIFont *hook_aioVideoFont(id self, SEL _cmd) {
     if (QQHPOff(@"qqhp-no-font")) return orig_aioVideoFont ? orig_aioVideoFont(self, _cmd) : nil;
-    return QQHPSystemFont(13.0);
+    return QQHPSysFont(13.0);
 }
 
-// ====================== 5. Weather (QQWeatherView) =======================
-// Hook -init (object return) and hide the view afterwards. Does not touch
-// layoutSubviews, so nothing collapses.
+// ====================== 5. 天气 ======================
 static id (*orig_weatherInit)(id, SEL);
 static id hook_weatherInit(id self, SEL _cmd) {
     id r = orig_weatherInit ? orig_weatherInit(self, _cmd) : nil;
@@ -172,7 +180,7 @@ static id hook_weatherInit(id self, SEL _cmd) {
     return r;
 }
 
-// ============ 6. Gift animation (QQGroupDeliverGiftAnimationManager) =====
+// ============ 6. 礼物动画 ============
 static void (*orig_startAnimation)(id, SEL);
 static void hook_startAnimation(id self, SEL _cmd) {
     if (QQHPOff(@"qqhp-no-gift")) {
@@ -180,7 +188,7 @@ static void hook_startAnimation(id self, SEL _cmd) {
     }
 }
 
-// ============ 7. Emoji suggestion (QQFaceAssociateFrameView) ============
+// ============ 7. 表情联想 ============
 static void (*orig_loadFace)(id, SEL, id, BOOL, id);
 static void hook_loadFace(id self, SEL _cmd, id face, BOOL cloud, id keywords) {
     if (QQHPOff(@"qqhp-no-faceassoc")) {
@@ -188,7 +196,7 @@ static void hook_loadFace(id self, SEL _cmd, id face, BOOL cloud, id keywords) {
     }
 }
 
-// ============ 8. Recommended emoji (QQFacePanelController) ==============
+// ============ 8. 推荐表情 ============
 static void (*orig_loadEmojiStoreFace)(id, SEL);
 static void hook_loadEmojiStoreFace(id self, SEL _cmd) {
     if (QQHPOff(@"qqhp-no-facestore")) {
@@ -196,7 +204,41 @@ static void hook_loadEmojiStoreFace(id self, SEL _cmd) {
     }
 }
 
-// ============================ install helper ============================
+// ============ 9. QQ空间去广告 ============
+// 做法：让广告 view/cell 创建时返回 nil（对象回传，安全），
+//       并把 banner 的高度判定改成 0（CGFloat=float，寄存器回传，安全）。
+static id (*orig_adBannerInit)(id, SEL, CGRect, id);
+static id hook_adBannerInit(id self, SEL _cmd, CGRect frame, id unit) {
+    if (!QQHPOff(@"qqhp-no-qzonead")) {
+        QQHPLog(@"[fired] blocked MQZoneAdBannerView init");
+        return nil;
+    }
+    return orig_adBannerInit ? orig_adBannerInit(self, _cmd, frame, unit) : nil;
+}
+
+static id (*orig_bannerInit)(id, SEL, CGRect);
+static id hook_bannerInit(id self, SEL _cmd, CGRect frame) {
+    if (!QQHPOff(@"qqhp-no-qzonead")) {
+        QQHPLog(@"[fired] blocked QZoneBannerAdView init");
+        return nil;
+    }
+    return orig_bannerInit ? orig_bannerInit(self, _cmd, frame) : nil;
+}
+
+static void (*orig_updateBanner)(id, SEL);
+static void hook_updateBanner(id self, SEL _cmd) {
+    if (QQHPOff(@"qqhp-no-qzonead")) {
+        if (orig_updateBanner) orig_updateBanner(self, _cmd);
+    }
+}
+
+static CGFloat (*orig_detailAdHeight)(Class, SEL);
+static CGFloat hook_detailAdHeight(Class self, SEL _cmd) {
+    if (!QQHPOff(@"qqhp-no-qzonead")) return 0.0f;
+    return orig_detailAdHeight ? orig_detailAdHeight(self, _cmd) : 0.0f;
+}
+
+// ============================ 安装辅助 ============================
 static void QQHPSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     if (cls == Nil || sel == NULL) return;
 
@@ -216,15 +258,6 @@ static void QQHPSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     method_setImplementation(m, newImp);
 }
 
-#define QQHP_HOOK(CLSNAME, SELNAME, HOOKFN, ORIGVAR)                          \
-    do {                                                                      \
-        Class c = NSClassFromString(@#CLSNAME);                               \
-        if (c != Nil)                                                         \
-            QQHPSwizzle(c, @selector(SELNAME), (IMP)&HOOKFN, (IMP *)&ORIGVAR); \
-        else                                                                  \
-            QQHPLog(@"class missing: %@", @#CLSNAME);                         \
-    } while (0)
-
 __attribute__((constructor))
 static void QQHPInit(void) {
     @autoreleasepool {
@@ -234,50 +267,117 @@ static void QQHPInit(void) {
             return;
         }
 
-        // 1. recall menu
+        // 1. 撤回：类型门禁
+        Class filter = NSClassFromString(@"QQRecallMenuFilter");
+        if (filter != Nil) {
+            QQHPSwizzle(filter, @selector(isTextNeedShowMenuRecall:), (IMP)&hook_isText, (IMP *)&orig_isText);
+            QQHPSwizzle(filter, @selector(isGroupMessageNeedShowMenuRecall:), (IMP)&hook_isGroup, (IMP *)&orig_isGroup);
+            QQHPSwizzle(filter, @selector(isQQPicMessageNeedShowMenuRecall:), (IMP)&hook_isPic, (IMP *)&orig_isPic);
+            QQHPSwizzle(filter, @selector(isQQPttMessageNeedShowMenuRecall:), (IMP)&hook_isPtt, (IMP *)&orig_isPtt);
+            QQHPSwizzle(filter, @selector(isFileNeedShowMenuRecall:), (IMP)&hook_isFile, (IMP *)&orig_isFile);
+            QQHPSwizzle(filter, @selector(isMarketFaceNeedShowMenuRecall:), (IMP)&hook_isMarketFace, (IMP *)&orig_isMarketFace);
+            QQHPSwizzle(filter, @selector(isQQSMMessageNeedShowMenuRecall:), (IMP)&hook_isSM, (IMP *)&orig_isSM);
+            QQHPSwizzle(filter, @selector(isQQRichShortVideoMessageNeedShowMenuRecall:), (IMP)&hook_isShortVideo, (IMP *)&orig_isShortVideo);
+        } else {
+            QQHPLog(@"QQRecallMenuFilter missing");
+        }
+
+        // 1b. 撤回：两分钟门禁
         {
-            Class c = NSClassFromString(@"QQRecallMenuFilter");
+            Class c = NSClassFromString(@"QQMessageRecallModule");
+            if (c != Nil)
+                QQHPSwizzle(c, @selector(isInTowMinutes:), (IMP)&hook_isInTowMinutes,
+                            (IMP *)&orig_isInTowMinutes);
+        }
+
+        // 2. 防撤回
+        {
+            Class c = NSClassFromString(@"QQMessageRecallModule");
             if (c != Nil) {
-                QQHPSwizzle(c, @selector(isTextNeedShowMenuRecall:), (IMP)&hook_isText, (IMP *)&orig_isText);
-                QQHPSwizzle(c, @selector(isGroupMessageNeedShowMenuRecall:), (IMP)&hook_isGroup, (IMP *)&orig_isGroup);
-                QQHPSwizzle(c, @selector(isQQPicMessageNeedShowMenuRecall:), (IMP)&hook_isPic, (IMP *)&orig_isPic);
-                QQHPSwizzle(c, @selector(isQQPttMessageNeedShowMenuRecall:), (IMP)&hook_isPtt, (IMP *)&orig_isPtt);
-                QQHPSwizzle(c, @selector(isFileNeedShowMenuRecall:), (IMP)&hook_isFile, (IMP *)&orig_isFile);
-                QQHPSwizzle(c, @selector(isMarketFaceNeedShowMenuRecall:), (IMP)&hook_isMarketFace, (IMP *)&orig_isMarketFace);
-                QQHPSwizzle(c, @selector(isQQSMMessageNeedShowMenuRecall:), (IMP)&hook_isSM, (IMP *)&orig_isSM);
-                QQHPSwizzle(c, @selector(isQQRichShortVideoMessageNeedShowMenuRecall:), (IMP)&hook_isShortVideo, (IMP *)&orig_isShortVideo);
-            } else {
-                QQHPLog(@"QQRecallMenuFilter missing");
+                QQHPSwizzle(c, @selector(recvC2CRecallNotify:bufferLen:subcmd:isOnline:),
+                            (IMP)&hook_recvC2C, (IMP *)&orig_recvC2C);
+                QQHPSwizzle(c, @selector(recvGroupRecallNotify:bufferLen:isOnline:),
+                            (IMP)&hook_recvGroup, (IMP *)&orig_recvGroup);
+                QQHPSwizzle(c, @selector(recvDiscussRecallNotify:bufferLen:isOnline:),
+                            (IMP)&hook_recvDiscuss, (IMP *)&orig_recvDiscuss);
             }
         }
 
-        // 2. anti-revoke
-        QQHP_HOOK(QQMessageRecallModule, recvC2CRecallNotify:bufferLen:subcmd:isOnline:, hook_recvC2C, orig_recvC2C);
-        QQHP_HOOK(QQMessageRecallModule, recvGroupRecallNotify:bufferLen:isOnline:, hook_recvGroup, orig_recvGroup);
-        QQHP_HOOK(QQMessageRecallModule, recvDiscussRecallNotify:bufferLen:isOnline:, hook_recvDiscuss, orig_recvDiscuss);
+        // 3. 头像挂件
+        {
+            Class c = NSClassFromString(@"QQAvatarView");
+            if (c != Nil) {
+                QQHPSwizzle(c, @selector(setShouldShowAvatarPendant:),
+                            (IMP)&hook_setShouldShowPendant, (IMP *)&orig_setShouldShowPendant);
+                QQHPSwizzle(c, @selector(avatarPendantID),
+                            (IMP)&hook_pendantID, (IMP *)&orig_pendantID);
+                QQHPSwizzle(c, @selector(shouldShowAvatarPendant),
+                            (IMP)&hook_shouldShowPendant, (IMP *)&orig_shouldShowPendant);
+            }
+        }
 
-        // 3. avatar pendant
-        QQHP_HOOK(QQAvatarView, setShouldShowAvatarPendant:, hook_setShouldShowPendant, orig_setShouldShowPendant);
-        QQHP_HOOK(QQAvatarView, avatarPendantID, hook_pendantID, orig_pendantID);
-        QQHP_HOOK(QQAvatarView, shouldShowAvatarPendant, hook_shouldShowPendant, orig_shouldShowPendant);
+        // 4. 字体
+        {
+            Class c = NSClassFromString(@"QQAIOFontManager");
+            if (c != Nil) {
+                QQHPSwizzle(c, @selector(aioTextFont), (IMP)&hook_aioTextFont, (IMP *)&orig_aioTextFont);
+                QQHPSwizzle(c, @selector(aioNickFont), (IMP)&hook_aioNickFont, (IMP *)&orig_aioNickFont);
+                QQHPSwizzle(c, @selector(aioTimeFont), (IMP)&hook_aioTimeFont, (IMP *)&orig_aioTimeFont);
+                QQHPSwizzle(c, @selector(aioVideoFont), (IMP)&hook_aioVideoFont, (IMP *)&orig_aioVideoFont);
+            }
+        }
 
-        // 4. custom font
-        QQHP_HOOK(QQAIOFontManager, aioTextFont, hook_aioTextFont, orig_aioTextFont);
-        QQHP_HOOK(QQAIOFontManager, aioNickFont, hook_aioNickFont, orig_aioNickFont);
-        QQHP_HOOK(QQAIOFontManager, aioTimeFont, hook_aioTimeFont, orig_aioTimeFont);
-        QQHP_HOOK(QQAIOFontManager, aioVideoFont, hook_aioVideoFont, orig_aioVideoFont);
+        // 5. 天气
+        {
+            Class c = NSClassFromString(@"QQWeatherView");
+            if (c != Nil)
+                QQHPSwizzle(c, @selector(init), (IMP)&hook_weatherInit, (IMP *)&orig_weatherInit);
+        }
 
-        // 5. weather
-        QQHP_HOOK(QQWeatherView, init, hook_weatherInit, orig_weatherInit);
+        // 6. 礼物动画
+        {
+            Class c = NSClassFromString(@"QQGroupDeliverGiftAnimationManager");
+            if (c != Nil)
+                QQHPSwizzle(c, @selector(startAnimation), (IMP)&hook_startAnimation,
+                            (IMP *)&orig_startAnimation);
+        }
 
-        // 6. gift animation
-        QQHP_HOOK(QQGroupDeliverGiftAnimationManager, startAnimation, hook_startAnimation, orig_startAnimation);
+        // 7. 表情联想
+        {
+            Class c = NSClassFromString(@"QQFaceAssociateFrameView");
+            if (c != Nil)
+                QQHPSwizzle(c, @selector(loadFace:hasCloudEmoji:keywords:),
+                            (IMP)&hook_loadFace, (IMP *)&orig_loadFace);
+        }
 
-        // 7. emoji suggestion
-        QQHP_HOOK(QQFaceAssociateFrameView, loadFace:hasCloudEmoji:keywords:, hook_loadFace, orig_loadFace);
+        // 8. 推荐表情
+        {
+            Class c = NSClassFromString(@"QQFacePanelController");
+            if (c != Nil)
+                QQHPSwizzle(c, @selector(loadEmojiStoreFace),
+                            (IMP)&hook_loadEmojiStoreFace, (IMP *)&orig_loadEmojiStoreFace);
+        }
 
-        // 8. recommended emoji
-        QQHP_HOOK(QQFacePanelController, loadEmojiStoreFace, hook_loadEmojiStoreFace, orig_loadEmojiStoreFace);
+        // 9. QQ空间去广告
+        {
+            Class c = NSClassFromString(@"MQZoneAdBannerView");
+            if (c != Nil)
+                QQHPSwizzle(c, @selector(initWithFrame:adBannerUnit:),
+                            (IMP)&hook_adBannerInit, (IMP *)&orig_adBannerInit);
+
+            c = NSClassFromString(@"QZoneBannerAdView");
+            if (c != Nil) {
+                QQHPSwizzle(c, @selector(initWithFrame:),
+                            (IMP)&hook_bannerInit, (IMP *)&orig_bannerInit);
+                QQHPSwizzle(c, @selector(updateBanner),
+                            (IMP)&hook_updateBanner, (IMP *)&orig_updateBanner);
+            }
+
+            c = NSClassFromString(@"MQZoneDetailAdBannerCell");
+            if (c != Nil)
+                QQHPSwizzle(c, @selector(heightForCell),
+                            (IMP)&hook_detailAdHeight, (IMP *)&orig_detailAdHeight);
+        }
 
         QQHPLog(@"init done");
     }
