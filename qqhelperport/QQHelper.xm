@@ -883,6 +883,17 @@ static void QQHSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     method_setImplementation(m, newImp);
 }
 
+// ============ 11. 去除转发限制 ============
+// MultiMsgForwardManager -isEnableMultiMsgForward 是「能否合并转发」的判定，纯 BOOL。
+static BOOL (*orig_isEnableMultiForward)(id, SEL);
+static BOOL hook_isEnableMultiForward(id self, SEL _cmd) {
+    if (QQHOn(@"fwdlimit", NO)) {
+        QQHPLog(@"[fired] multi-forward enabled");
+        return YES;
+    }
+    return orig_isEnableMultiForward ? orig_isEnableMultiForward(self, _cmd) : NO;
+}
+
 __attribute__((constructor))
 static void QQHInit(void) {
     @autoreleasepool {
@@ -1064,6 +1075,18 @@ static void QQHInit(void) {
                        (IMP)&hook_mqzDownloadPics, (IMP *)&orig_mqzDownloadPics);
             QQHSwizzle(c, @selector(stopDownload),
                        (IMP)&hook_mqzStop, (IMP *)&orig_mqzStop);
+        }
+
+        // 11) 去除转发限制
+        {
+            Class fm = NSClassFromString(@"MultiMsgForwardManager");
+            if (fm != Nil) {
+                QQHSwizzle(fm, @selector(isEnableMultiMsgForward),
+                           (IMP)&hook_isEnableMultiForward,
+                           (IMP *)&orig_isEnableMultiForward);
+            } else {
+                QQHPLog(@"MultiMsgForwardManager missing");
+            }
         }
 
         QQHDumpPrefs();
