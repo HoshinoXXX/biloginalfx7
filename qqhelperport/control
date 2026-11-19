@@ -1,0 +1,9 @@
+Package: com.qqhelperport.tweak
+Name: QQHelper Port (QQ 6.2)
+Version: 0.1
+Architecture: iphoneos-arm
+Description: Port of QQHelper features to QQ 6.2 on iOS 10. Restores the long-press Recall menu item and adds anti-revoke, avatar pendant hiding, weather removal and chat timestamp hiding. Each feature has its own kill switch in /tmp.
+Maintainer: qqhp
+Author: qqhp
+Section: Tweaks
+Depends: mobilesubstrate, firmware (>= 7.0)
