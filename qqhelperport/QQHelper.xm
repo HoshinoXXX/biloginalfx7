@@ -162,6 +162,7 @@ static CGFloat hook_detailAdHeight(Class self, SEL _cmd) {
 
 // 前向声明（实现在下面的诊断段里）
 static void QQHNoteCell(id cell);
+static void QQHNoteModel(id model);
 
 // ==================== 3b. QQ空间信息流广告（真正的那个）====================
 // 广告 cell 的类名是 QzoneFeedCellGdtAdLR，它自己没有方法，全部继承
@@ -260,6 +261,91 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
         }
     }
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
+}
+
+// ============ 6. 净化类功能（全部默认关闭）============
+// 这些功能按用户要求「做出来但默认不打开」，用原面板已有的开关 key。
+
+// ---- 6.1 去除天气：tq ----
+static id (*orig_weatherInit)(id, SEL);
+static id hook_weatherInit(id self, SEL _cmd) {
+    id r = orig_weatherInit ? orig_weatherInit(self, _cmd) : nil;
+    if (QQHOn(@"tq", NO) && [r isKindOfClass:[UIView class]])
+        [(UIView *)r setHidden:YES];
+    return r;
+}
+
+// ---- 6.2 屏蔽头像挂件：gj ----
+static void (*orig_setShouldShowPendant)(id, SEL, BOOL);
+static void hook_setShouldShowPendant(id self, SEL _cmd, BOOL show) {
+    if (QQHOn(@"gj", NO)) show = NO;
+    if (orig_setShouldShowPendant) orig_setShouldShowPendant(self, _cmd, show);
+}
+
+static id (*orig_pendantID)(id, SEL);
+static id hook_pendantID(id self, SEL _cmd) {
+    if (QQHOn(@"gj", NO)) return nil;
+    return orig_pendantID ? orig_pendantID(self, _cmd) : nil;
+}
+
+// ---- 6.3 屏蔽礼物动画：lw ----
+static void (*orig_startAnimation)(id, SEL);
+static void hook_startAnimation(id self, SEL _cmd) {
+    if (QQHOn(@"lw", NO)) {
+        QQHPLog(@"[fired] gift animation skipped");
+        return;
+    }
+    if (orig_startAnimation) orig_startAnimation(self, _cmd);
+}
+
+// ---- 6.4 屏蔽表情联想：bqlx ----
+static void (*orig_loadFace)(id, SEL, id, BOOL, id);
+static void hook_loadFace(id self, SEL _cmd, id face, BOOL cloud, id kw) {
+    if (QQHOn(@"bqlx", NO)) return;
+    if (orig_loadFace) orig_loadFace(self, _cmd, face, cloud, kw);
+}
+
+// ---- 6.5 屏蔽个性字体 / 大小字体：gxzt / dxzt ----
+static BOOL QQHFontBlocked(void) {
+    return QQHOn(@"gxzt", NO) || QQHOn(@"dxzt", NO);
+}
+
+static UIFont *(*orig_aioTextFont)(id, SEL);
+static UIFont *hook_aioTextFont(id self, SEL _cmd) {
+    if (QQHFontBlocked()) return [UIFont systemFontOfSize:16.0];
+    return orig_aioTextFont ? orig_aioTextFont(self, _cmd) : nil;
+}
+
+static UIFont *(*orig_aioNickFont)(id, SEL);
+static UIFont *hook_aioNickFont(id self, SEL _cmd) {
+    if (QQHFontBlocked()) return [UIFont systemFontOfSize:13.0];
+    return orig_aioNickFont ? orig_aioNickFont(self, _cmd) : nil;
+}
+
+static UIFont *(*orig_aioTimeFont)(id, SEL);
+static UIFont *hook_aioTimeFont(id self, SEL _cmd) {
+    if (QQHFontBlocked()) return [UIFont systemFontOfSize:11.0];
+    return orig_aioTimeFont ? orig_aioTimeFont(self, _cmd) : nil;
+}
+
+static UIFont *(*orig_aioVideoFont)(id, SEL);
+static UIFont *hook_aioVideoFont(id self, SEL _cmd) {
+    if (QQHFontBlocked()) return [UIFont systemFontOfSize:13.0];
+    return orig_aioVideoFont ? orig_aioVideoFont(self, _cmd) : nil;
+}
+
+// ---- 6.6 屏蔽推荐表情：tjbq ----
+static void (*orig_loadEmojiStoreFace)(id, SEL);
+static void hook_loadEmojiStoreFace(id self, SEL _cmd) {
+    if (QQHOn(@"tjbq", NO)) return;
+    if (orig_loadEmojiStoreFace) orig_loadEmojiStoreFace(self, _cmd);
+}
+
+// ---- 6.7 屏蔽个性气泡 / 气泡背景：qp / qpbj ----
+static BOOL (*orig_hasBubbleResource)(id, SEL, id);
+static BOOL hook_hasBubbleResource(id self, SEL _cmd, id arg) {
+    if (QQHOn(@"qp", NO) || QQHOn(@"qpbj", NO)) return NO;
+    return orig_hasBubbleResource ? orig_hasBubbleResource(self, _cmd, arg) : NO;
 }
 
 // ============ 5. QQ 等级修改 / 余额修改（仅本地显示）============
@@ -622,6 +708,50 @@ static void QQHInit(void) {
             } else {
                 QQHPLog(@"PayTool missing");
             }
+        }
+
+        // 6. 净化类功能（默认关闭）
+        {
+            Class c = NSClassFromString(@"QQWeatherView");
+            if (c != Nil)
+                QQHSwizzle(c, @selector(init), (IMP)&hook_weatherInit, (IMP *)&orig_weatherInit);
+
+            c = NSClassFromString(@"QQAvatarView");
+            if (c != Nil) {
+                QQHSwizzle(c, @selector(setShouldShowAvatarPendant:),
+                           (IMP)&hook_setShouldShowPendant,
+                           (IMP *)&orig_setShouldShowPendant);
+                QQHSwizzle(c, @selector(avatarPendantID),
+                           (IMP)&hook_pendantID, (IMP *)&orig_pendantID);
+            }
+
+            c = NSClassFromString(@"QQGroupDeliverGiftAnimationManager");
+            if (c != Nil)
+                QQHSwizzle(c, @selector(startAnimation),
+                           (IMP)&hook_startAnimation, (IMP *)&orig_startAnimation);
+
+            c = NSClassFromString(@"QQFaceAssociateFrameView");
+            if (c != Nil)
+                QQHSwizzle(c, @selector(loadFace:hasCloudEmoji:keywords:),
+                           (IMP)&hook_loadFace, (IMP *)&orig_loadFace);
+
+            c = NSClassFromString(@"QQAIOFontManager");
+            if (c != Nil) {
+                QQHSwizzle(c, @selector(aioTextFont), (IMP)&hook_aioTextFont, (IMP *)&orig_aioTextFont);
+                QQHSwizzle(c, @selector(aioNickFont), (IMP)&hook_aioNickFont, (IMP *)&orig_aioNickFont);
+                QQHSwizzle(c, @selector(aioTimeFont), (IMP)&hook_aioTimeFont, (IMP *)&orig_aioTimeFont);
+                QQHSwizzle(c, @selector(aioVideoFont), (IMP)&hook_aioVideoFont, (IMP *)&orig_aioVideoFont);
+            }
+
+            c = NSClassFromString(@"QQFacePanelController");
+            if (c != Nil)
+                QQHSwizzle(c, @selector(loadEmojiStoreFace),
+                           (IMP)&hook_loadEmojiStoreFace, (IMP *)&orig_loadEmojiStoreFace);
+
+            c = NSClassFromString(@"BubbleBgManager");
+            if (c != Nil)
+                QQHSwizzle(c, @selector(hasBubbleResource:),
+                           (IMP)&hook_hasBubbleResource, (IMP *)&orig_hasBubbleResource);
         }
 
         QQHDumpPrefs();
