@@ -320,7 +320,6 @@ static NSString *QQHForceJPEG(NSString *s) {
 // 之前只 hook 了实例方法，所以这条路径一直没被看到。
 static id (*orig_connClassMethod)(Class, SEL, id, id);
 static void (*orig_connAsync)(Class, SEL, id, id, id);
-static id (*orig_connInitStart)(id, SEL, id, id, BOOL);
 // ============ 10b. QQ空间图片下载器 MQZMutiplePicDownloader ============
 // 完整的类名是 MQZMutiplePicDownloader（MQZ = Mobile QZone）。
 // 图片既不走 NSURLSession 也不走 BDH，而是走它。
@@ -816,7 +815,6 @@ static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
 static id (*orig_dataTaskWithURL)(id, SEL, NSURL *);
 static id (*orig_dataTaskWithRequest)(id, SEL, id);
 static id (*orig_mutableReqInit)(id, SEL, NSURL *);
-static id (*orig_connInit)(id, SEL, id, id);
 // ---- NSURLSession 的带 block 变体（SDWebImage 实际走这些）----
 static id (*orig_dataTaskWithURLHandler)(id, SEL, NSURL *, id);
 static id (*orig_dataTaskWithReqHandler)(id, SEL, id, id);
@@ -978,7 +976,6 @@ static void QQHInit(void) {
         // NSURLConnection 相关注册已移除（会引入 CFNetwork 依赖）
             if (conn != Nil) {
                 QQHSwizzle(conn, @selector(initWithRequest:delegate:),
-                           (IMP)&hook_connInit, (IMP *)&orig_connInit);
             }
 
             // 带 block 的变体：SDWebImage 实际用的是这些
