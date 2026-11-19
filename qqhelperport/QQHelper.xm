@@ -892,7 +892,7 @@ static void QQHInit(void) {
             return;
         }
 
-        // 1. 撤回按钮
+        // 1) 撤回菜单：按消息类型的 8 个类方法（6.2 多的三个查不到会自动跳过）
         Class filter = NSClassFromString(@"QQRecallMenuFilter");
         if (filter != Nil) {
             QQHSwizzle(filter, @selector(isTextNeedShowMenuRecall:), (IMP)&hook_isText, (IMP *)&orig_isText);
@@ -907,238 +907,163 @@ static void QQHInit(void) {
             QQHPLog(@"QQRecallMenuFilter missing");
         }
 
+        // 2) 两分钟门禁 + 防撤回（三个 recv*Notify）
         Class recall = NSClassFromString(@"QQMessageRecallModule");
         if (recall != Nil) {
             QQHSwizzle(recall, @selector(isInTowMinutes:), (IMP)&hook_isInTowMinutes,
                        (IMP *)&orig_isInTowMinutes);
-            // 2. 防撤回
             QQHSwizzle(recall, @selector(recvC2CRecallNotify:bufferLen:subcmd:isOnline:),
                        (IMP)&hook_recvC2C, (IMP *)&orig_recvC2C);
             QQHSwizzle(recall, @selector(recvGroupRecallNotify:bufferLen:isOnline:),
                        (IMP)&hook_recvGroup, (IMP *)&orig_recvGroup);
             QQHSwizzle(recall, @selector(recvDiscussRecallNotify:bufferLen:isOnline:),
                        (IMP)&hook_recvDiscuss, (IMP *)&orig_recvDiscuss);
+        } else {
+            QQHPLog(@"QQMessageRecallModule missing");
         }
 
-        // 3. QQ 空间去广告
-        {
-            Class c = NSClassFromString(@"MQZoneAdBannerView");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(initWithFrame:adBannerUnit:),
-                           (IMP)&hook_adBannerInit, (IMP *)&orig_adBannerInit);
+        // 3) QQ空间广告（横幅 + 信息流）
+        Class c = NSClassFromString(@"MQZoneAdBannerView");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(initWithFrame:adBannerUnit:),
+                       (IMP)&hook_adBannerInit, (IMP *)&orig_adBannerInit);
 
-            c = NSClassFromString(@"QZoneBannerAdView");
-            if (c != Nil) {
-                QQHSwizzle(c, @selector(initWithFrame:),
-                           (IMP)&hook_bannerInit, (IMP *)&orig_bannerInit);
-                QQHSwizzle(c, @selector(updateBanner),
-                           (IMP)&hook_updateBanner, (IMP *)&orig_updateBanner);
-            }
-
-            c = NSClassFromString(@"MQZoneDetailAdBannerCell");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(heightForCell),
-                           (IMP)&hook_detailAdHeight, (IMP *)&orig_detailAdHeight);
-
-            // 真正的那个信息流广告：hook 基底类 QzoneFeedCell
-            c = NSClassFromString(@"QzoneFeedCell");
-            if (c != Nil) {
-                QQHSwizzle(c, @selector(layoutFeedView),
-                           (IMP)&hook_layoutFeedView, (IMP *)&orig_layoutFeedView);
-                QQHSwizzle(c, @selector(setFeedModel:),
-                           (IMP)&hook_setFeedModel, (IMP *)&orig_setFeedModel);
-            } else {
-                QQHPLog(@"QzoneFeedCell missing");
-            }
+        c = NSClassFromString(@"QZoneBannerAdView");
+        if (c != Nil) {
+            QQHSwizzle(c, @selector(initWithFrame:),
+                       (IMP)&hook_bannerInit, (IMP *)&orig_bannerInit);
+            QQHSwizzle(c, @selector(updateBanner),
+                       (IMP)&hook_updateBanner, (IMP *)&orig_updateBanner);
         }
 
-        // 4. QQ空间图片修复
-        {
-            Class nsurlreq = NSClassFromString(@"NSURLRequest");
-            if (nsurlreq != Nil) {
-                Class meta = object_getClass(nsurlreq);
-                if (meta != Nil) {
-                    Method m = class_getClassMethod(nsurlreq,
-                                                    @selector(requestWithURL:));
-                    } else {
-                        QQHPLog(@"NSURLRequest requestWithURL: not found");
-                    }
-                }
-            }
+        c = NSClassFromString(@"MQZoneDetailAdBannerCell");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(heightForCell),
+                       (IMP)&hook_detailAdHeight, (IMP *)&orig_detailAdHeight);
+
+        c = NSClassFromString(@"QzoneFeedCell");
+        if (c != Nil) {
+            QQHSwizzle(c, @selector(layoutFeedView),
+                       (IMP)&hook_layoutFeedView, (IMP *)&orig_layoutFeedView);
+            QQHSwizzle(c, @selector(setFeedModel:),
+                       (IMP)&hook_setFeedModel, (IMP *)&orig_setFeedModel);
         }
 
-        // 4b. 图片请求的其它入口（QQ空间图片不走 requestWithURL:）
-        {
-            // NSURLSession 相关 hook 已移除（会引入 CFNetwork 依赖，iOS 7 上无法注入）
-            Class mreq = NSClassFromString(@"NSMutableURLRequest");
-            if (mreq != Nil) {
-            }
-        // NSURLConnection 相关注册已移除（会引入 CFNetwork 依赖）
-            if (conn != Nil) {
-                QQHSwizzle(conn, @selector(initWithRequest:delegate:),
-            }
-
-            // 带 block 的变体：SDWebImage 实际用的是这些
-            // 带 block 的 NSURLSession 变体一并移除（同属 CFNetwork 依赖）
+        // 5) 等级 / 余额（仅本地显示）
+        Class lv = NSClassFromString(@"QQLevelView");
+        if (lv != Nil) {
+            QQHSwizzle(lv, @selector(level), (IMP)&hook_levelGetter, (IMP *)&orig_levelGetter);
+            QQHSwizzle(lv, @selector(setLevel:), (IMP)&hook_setLevel, (IMP *)&orig_setLevel);
         }
 
-        // 5. 等级修改 / 余额修改
-        {
-            Class lv = NSClassFromString(@"QQLevelView");
-            if (lv != Nil) {
-                QQHSwizzle(lv, @selector(level),
-                           (IMP)&hook_levelGetter, (IMP *)&orig_levelGetter);
-                QQHSwizzle(lv, @selector(setLevel:),
-                           (IMP)&hook_setLevel, (IMP *)&orig_setLevel);
-            }
-
-            Class pay = NSClassFromString(@"PayTool");
-            if (pay != Nil) {
-                QQHSwizzle(pay, @selector(formatQbBalance:),
-                           (IMP)&hook_formatQb, (IMP *)&orig_formatQb);
-                QQHSwizzle(pay, @selector(formatQdBalance:),
-                           (IMP)&hook_formatQd, (IMP *)&orig_formatQd);
-            } else {
-                QQHPLog(@"PayTool missing");
-            }
+        Class pay = NSClassFromString(@"PayTool");
+        if (pay != Nil) {
+            QQHSwizzle(pay, @selector(formatQbBalance:), (IMP)&hook_formatQb, (IMP *)&orig_formatQb);
+            QQHSwizzle(pay, @selector(formatQdBalance:), (IMP)&hook_formatQd, (IMP *)&orig_formatQd);
         }
 
-        // 6. 净化类功能（默认关闭）
-        {
-            Class c = NSClassFromString(@"QQWeatherView");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(init), (IMP)&hook_weatherInit, (IMP *)&orig_weatherInit);
+        // 6) 净化类（默认全关）
+        c = NSClassFromString(@"QQWeatherView");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(init), (IMP)&hook_weatherInit, (IMP *)&orig_weatherInit);
 
-            c = NSClassFromString(@"QQAvatarView");
-            if (c != Nil) {
-                QQHSwizzle(c, @selector(setShouldShowAvatarPendant:),
-                           (IMP)&hook_setShouldShowPendant,
-                           (IMP *)&orig_setShouldShowPendant);
-                QQHSwizzle(c, @selector(avatarPendantID),
-                           (IMP)&hook_pendantID, (IMP *)&orig_pendantID);
-            }
-
-            c = NSClassFromString(@"QQGroupDeliverGiftAnimationManager");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(startAnimation),
-                           (IMP)&hook_startAnimation, (IMP *)&orig_startAnimation);
-
-            c = NSClassFromString(@"QQFaceAssociateFrameView");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(loadFace:hasCloudEmoji:keywords:),
-                           (IMP)&hook_loadFace, (IMP *)&orig_loadFace);
-
-            c = NSClassFromString(@"QQAIOFontManager");
-            if (c != Nil) {
-                QQHSwizzle(c, @selector(aioTextFont), (IMP)&hook_aioTextFont, (IMP *)&orig_aioTextFont);
-                QQHSwizzle(c, @selector(aioNickFont), (IMP)&hook_aioNickFont, (IMP *)&orig_aioNickFont);
-                QQHSwizzle(c, @selector(aioTimeFont), (IMP)&hook_aioTimeFont, (IMP *)&orig_aioTimeFont);
-                QQHSwizzle(c, @selector(aioVideoFont), (IMP)&hook_aioVideoFont, (IMP *)&orig_aioVideoFont);
-            }
-
-            c = NSClassFromString(@"QQFacePanelController");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(loadEmojiStoreFace),
-                           (IMP)&hook_loadEmojiStoreFace, (IMP *)&orig_loadEmojiStoreFace);
-
-            c = NSClassFromString(@"BubbleBgManager");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(hasBubbleResource:),
-                           (IMP)&hook_hasBubbleResource, (IMP *)&orig_hasBubbleResource);
+        c = NSClassFromString(@"QQAvatarView");
+        if (c != Nil) {
+            QQHSwizzle(c, @selector(setShouldShowAvatarPendant:),
+                       (IMP)&hook_setShouldShowPendant, (IMP *)&orig_setShouldShowPendant);
+            QQHSwizzle(c, @selector(avatarPendantID),
+                       (IMP)&hook_pendantID, (IMP *)&orig_pendantID);
         }
 
-        // 7. 365 点赞 / 伪装群管理 / 强开红包
-        {
-            Class vc = NSClassFromString(@"QQGroupMemberCardViewController");
-            if (vc != Nil)
-                QQHSwizzle(vc, @selector(isGroupOwnerOrAdministrator:),
-                           (IMP)&hook_isGroupOwnerOrAdmin,
-                           (IMP *)&orig_isGroupOwnerOrAdmin);
+        c = NSClassFromString(@"QQGroupDeliverGiftAnimationManager");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(startAnimation),
+                       (IMP)&hook_startAnimation, (IMP *)&orig_startAnimation);
 
-            Class zan = NSClassFromString(@"UserSummaryZanButton");
-            if (zan != Nil)
-                QQHSwizzle(zan, @selector(updateZanType:zanType:andIfNoted:increaseNum:),
-                           (IMP)&hook_updateZan, (IMP *)&orig_updateZan);
+        c = NSClassFromString(@"QQFaceAssociateFrameView");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(loadFace:hasCloudEmoji:keywords:),
+                       (IMP)&hook_loadFace, (IMP *)&orig_loadFace);
 
-            Class rp = NSClassFromString(@"QQWalletRedEnvelopeAIOMsgView");
-            if (rp != Nil)
-                QQHSwizzle(rp, @selector(setRedEnvelopeInfo:),
-                           (IMP)&hook_setRedEnvelopeInfo,
-                           (IMP *)&orig_setRedEnvelopeInfo);
+        c = NSClassFromString(@"QQAIOFontManager");
+        if (c != Nil) {
+            QQHSwizzle(c, @selector(aioTextFont), (IMP)&hook_aioTextFont, (IMP *)&orig_aioTextFont);
+            QQHSwizzle(c, @selector(aioNickFont), (IMP)&hook_aioNickFont, (IMP *)&orig_aioNickFont);
+            QQHSwizzle(c, @selector(aioTimeFont), (IMP)&hook_aioTimeFont, (IMP *)&orig_aioTimeFont);
+            QQHSwizzle(c, @selector(aioVideoFont), (IMP)&hook_aioVideoFont, (IMP *)&orig_aioVideoFont);
         }
 
-        // 8. 在线显示机型 + 网络
-        {
-            Class rs = NSClassFromString(@"RichStateModel");
-            if (rs != Nil) {
-                QQHSwizzle(rs, @selector(getPlainText),
-                           (IMP)&hook_richPlainText, (IMP *)&orig_richPlainText);
-                QQHSwizzle(rs, @selector(briefText),
-                           (IMP)&hook_richBriefText, (IMP *)&orig_richBriefText);
-            } else {
-                QQHPLog(@"RichStateModel missing");
-            }
-            // 9. 资料卡等级格子 / AIO 在线文案
-            Class lvc = NSClassFromString(@"UserSummaryQQLevelCell");
-            if (lvc != Nil)
-                QQHSwizzle(lvc, @selector(setQQLevel:),
-                           (IMP)&hook_setQQLevel, (IMP *)&orig_setQQLevel);
+        c = NSClassFromString(@"QQFacePanelController");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(loadEmojiStoreFace),
+                       (IMP)&hook_loadEmojiStoreFace, (IMP *)&orig_loadEmojiStoreFace);
 
-            Class rsCell = NSClassFromString(@"QQAIORichStatusSigCellView");
-            if (rsCell != Nil)
-                QQHSwizzle(rsCell, @selector(setDetailText),
-                           (IMP)&hook_setDetailText, (IMP *)&orig_setDetailText);
+        c = NSClassFromString(@"BubbleBgManager");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(hasBubbleResource:),
+                       (IMP)&hook_hasBubbleResource, (IMP *)&orig_hasBubbleResource);
 
-            // 设备名与网络只在开关打开时才算，避免每次启动多做无用功
-            if (QQHOn(@"onlinemodel", NO))
-                QQHPLog(@"online model preview: %@", QQHOnlineText());
+        // 7) 365 / 伪装群管理 / 红包（默认全关）
+        Class vc = NSClassFromString(@"QQGroupMemberCardViewController");
+        if (vc != Nil)
+            QQHSwizzle(vc, @selector(isGroupOwnerOrAdministrator:),
+                       (IMP)&hook_isGroupOwnerOrAdmin, (IMP *)&orig_isGroupOwnerOrAdmin);
+
+        Class zan = NSClassFromString(@"UserSummaryZanButton");
+        if (zan != Nil)
+            QQHSwizzle(zan, @selector(updateZanType:zanType:andIfNoted:increaseNum:),
+                       (IMP)&hook_updateZan, (IMP *)&orig_updateZan);
+
+        Class rp = NSClassFromString(@"QQWalletRedEnvelopeAIOMsgView");
+        if (rp != Nil)
+            QQHSwizzle(rp, @selector(setRedEnvelopeInfo:),
+                       (IMP)&hook_setRedEnvelopeInfo, (IMP *)&orig_setRedEnvelopeInfo);
+
+        // 8) 在线状态文案 + 资料卡等级格子 + AIO 状态格
+        Class rs = NSClassFromString(@"RichStateModel");
+        if (rs != Nil) {
+            QQHSwizzle(rs, @selector(getPlainText), (IMP)&hook_richPlainText, (IMP *)&orig_richPlainText);
+            QQHSwizzle(rs, @selector(briefText), (IMP)&hook_richBriefText, (IMP *)&orig_richBriefText);
         }
 
-        // 10. BDH 下载层诊断
-        {
-            Class c = NSClassFromString(@"BDHHttpConnection");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(initWithHostName:),
-                           (IMP)&hook_bdhInitHost, (IMP *)&orig_bdhInitHost);
+        Class lvc = NSClassFromString(@"UserSummaryQQLevelCell");
+        if (lvc != Nil)
+            QQHSwizzle(lvc, @selector(setQQLevel:), (IMP)&hook_setQQLevel, (IMP *)&orig_setQQLevel);
 
-            c = NSClassFromString(@"BasePicDownloadReqInfo");
-            if (c != Nil)
-                QQHSwizzle(c, @selector(fileId), (IMP)&hook_picFileId,
-                           (IMP *)&orig_picFileId);
+        Class rsCell = NSClassFromString(@"QQAIORichStatusSigCellView");
+        if (rsCell != Nil)
+            QQHSwizzle(rsCell, @selector(setDetailText),
+                       (IMP)&hook_setDetailText, (IMP *)&orig_setDetailText);
 
-            c = NSClassFromString(@"BDHHttpStream");
-            if (c != Nil) {
-                QQHSwizzle(c, @selector(notifyHttpError:),
-                           (IMP)&hook_notifyHttpError, (IMP *)&orig_notifyHttpError);
-                QQHSwizzle(c, @selector(setHttpError:),
-                           (IMP)&hook_setHttpError, (IMP *)&orig_setHttpError);
-                QQHSwizzle(c, @selector(iStatusCode),
-                           (IMP)&hook_iStatusCode, (IMP *)&orig_iStatusCode);
-            } else {
-                QQHPLog(@"BDHHttpStream missing");
-            }
+        // 10) BDH 下载层诊断（仅调试输出）
+        c = NSClassFromString(@"BDHHttpConnection");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(initWithHostName:),
+                       (IMP)&hook_bdhInitHost, (IMP *)&orig_bdhInitHost);
+
+        c = NSClassFromString(@"BasePicDownloadReqInfo");
+        if (c != Nil)
+            QQHSwizzle(c, @selector(fileId), (IMP)&hook_picFileId, (IMP *)&orig_picFileId);
+
+        c = NSClassFromString(@"BDHHttpStream");
+        if (c != Nil) {
+            QQHSwizzle(c, @selector(notifyHttpError:),
+                       (IMP)&hook_notifyHttpError, (IMP *)&orig_notifyHttpError);
+            QQHSwizzle(c, @selector(setHttpError:),
+                       (IMP)&hook_setHttpError, (IMP *)&orig_setHttpError);
+            QQHSwizzle(c, @selector(iStatusCode),
+                       (IMP)&hook_iStatusCode, (IMP *)&orig_iStatusCode);
         }
 
-        // 10b. QQ空间图片下载器
-        {
-            Class c = NSClassFromString(@"MQZMutiplePicDownloader");
-            if (c != Nil) {
-                QQHSwizzle(c, @selector(getMessageModelByURL:),
-                           (IMP)&hook_mqzGetByURL, (IMP *)&orig_mqzGetByURL);
-                QQHSwizzle(c, @selector(downloadPicsByMessageModel:completion:),
-                           (IMP)&hook_mqzDownloadPics, (IMP *)&orig_mqzDownloadPics);
-                QQHSwizzle(c, @selector(stopDownload),
-                           (IMP)&hook_mqzStop, (IMP *)&orig_mqzStop);
-            } else {
-                QQHPLog(@"MQZMutiplePicDownloader missing");
-            }
-        }
-
-        // 10c. NSURLConnection 类方法入口
-        {
-        // NSURLConnection 相关注册已移除（会引入 CFNetwork 依赖）
-            if (c != Nil) {
-            }
+        // 10b) QQ空间图片下载器
+        c = NSClassFromString(@"MQZMutiplePicDownloader");
+        if (c != Nil) {
+            QQHSwizzle(c, @selector(getMessageModelByURL:),
+                       (IMP)&hook_mqzGetByURL, (IMP *)&orig_mqzGetByURL);
+            QQHSwizzle(c, @selector(downloadPicsByMessageModel:completion:),
+                       (IMP)&hook_mqzDownloadPics, (IMP *)&orig_mqzDownloadPics);
+            QQHSwizzle(c, @selector(stopDownload),
+                       (IMP)&hook_mqzStop, (IMP *)&orig_mqzStop);
         }
 
         QQHDumpPrefs();
