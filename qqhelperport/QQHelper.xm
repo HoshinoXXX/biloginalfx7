@@ -894,6 +894,59 @@ static BOOL hook_isEnableMultiForward(id self, SEL _cmd) {
     return orig_isEnableMultiForward ? orig_isEnableMultiForward(self, _cmd) : NO;
 }
 
+// ============ 12. 第二批：语音转文本 / 输入框提示 / 禁言精确到秒 ============
+
+// ---- 12.1 语音自动转文本：把灰度开关直接推成开启 ----
+// QQAppSetting -setVoiceToTextMask:state:  server 下发的灰度开关，
+// 推成 YES 之后客户端就会走语音识别流程。
+static void (*orig_setVoiceToTextMask)(id, SEL, id, BOOL);
+static void hook_setVoiceToTextMask(id self, SEL _cmd, id url, BOOL state) {
+    if (QQHOn(@"voicetotext", NO)) {
+        QQHPLog(@"[fired] voiceToTextMask forced YES (was %d)", (int)state);
+        state = YES;
+    }
+    if (orig_setVoiceToTextMask) orig_setVoiceToTextMask(self, _cmd, url, state);
+}
+
+// 语音气泡出现时主动请求一次文本
+static void (*orig_requestVoiceToText)(id, SEL);
+static void hook_requestVoiceToText(id self, SEL _cmd) {
+    if (orig_requestVoiceToText) orig_requestVoiceToText(self, _cmd);
+    if (QQHOn(@"voicetotext", NO)) QQHPLog(@"[fired] requestVoiceToText");
+}
+
+// ---- 12.2 输入框提示文本自定义 ----
+// QQTextInputCell -setTextViewPlaceHolder:editingDefaultText:
+static void (*orig_setPlaceHolder)(id, SEL, id, BOOL);
+static void hook_setPlaceHolder(id self, SEL _cmd, id placeholder, BOOL editing) {
+    if (QQHOn(@"phint", NO)) {
+        NSString *custom = QQHStringPref(@"phintval");
+        if ([custom length] > 0) {
+            QQHPLog(@"[fired] placeholder -> %@", custom);
+            placeholder = custom;
+        }
+    }
+    if (orig_setPlaceHolder) orig_setPlaceHolder(self, _cmd, placeholder, editing);
+}
+
+// ---- 12.3 禁言时间精确到秒 ----
+// QQGroupMemberShutupEngine -requestSetMemberShutup:memUin:shutupDuration:setOrCancel:
+// 把 duration 换成面板里填的秒数。
+static void (*orig_requestShutup)(id, SEL, id, id, int, BOOL);
+static void hook_requestShutup(id self, SEL _cmd, id a, id b, int duration, BOOL set) {
+    if (QQHOn(@"muteSec", NO) && set) {
+        NSString *s = QQHStringPref(@"muteval");
+        if ([s length] > 0) {
+            int v = [s intValue];
+            if (v > 0) {
+                QQHPLog(@"[fired] shutup duration %d -> %d", duration, v);
+                duration = v;
+            }
+        }
+    }
+    if (orig_requestShutup) orig_requestShutup(self, _cmd, a, b, duration, set);
+}
+
 __attribute__((constructor))
 static void QQHInit(void) {
     @autoreleasepool {
@@ -1075,6 +1128,32 @@ static void QQHInit(void) {
                        (IMP)&hook_mqzDownloadPics, (IMP *)&orig_mqzDownloadPics);
             QQHSwizzle(c, @selector(stopDownload),
                        (IMP)&hook_mqzStop, (IMP *)&orig_mqzStop);
+        }
+
+        // 12) 语音转文本 / 输入框提示 / 禁言精确到秒
+        {
+            Class appSetting = NSClassFromString(@"QQAppSetting");
+            if (appSetting != Nil)
+                QQHSwizzle(appSetting, @selector(setVoiceToTextMask:state:),
+                           (IMP)&hook_setVoiceToTextMask,
+                           (IMP *)&orig_setVoiceToTextMask);
+
+            Class voiceCell = NSClassFromString(@"QQVoiceCellView");
+            if (voiceCell != Nil)
+                QQHSwizzle(voiceCell, @selector(requestVoiceToText),
+                           (IMP)&hook_requestVoiceToText,
+                           (IMP *)&orig_requestVoiceToText);
+
+            Class inputCell = NSClassFromString(@"QQTextInputCell");
+            if (inputCell != Nil)
+                QQHSwizzle(inputCell, @selector(setTextViewPlaceHolder:editingDefaultText:),
+                           (IMP)&hook_setPlaceHolder, (IMP *)&orig_setPlaceHolder);
+
+            Class shutup = NSClassFromString(@"QQGroupMemberShutupEngine");
+            if (shutup != Nil)
+                QQHSwizzle(shutup,
+                           @selector(requestSetMemberShutup:memUin:shutupDuration:setOrCancel:),
+                           (IMP)&hook_requestShutup, (IMP *)&orig_requestShutup);
         }
 
         // 11) 去除转发限制
