@@ -1,0 +1,102 @@
+name: Build QQ Probe (lld platform_version)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qqprobe/**'
+      - '.github/workflows/qqprobe-lld.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macOS runners are not allocated for this account, so build on ubuntu.
+    # Earlier lld failed with both "must specify -platform_version" and
+    # "missing or unsupported -arch armv7"; the second is likely a consequence
+    # of the first, since without a platform lld cannot resolve the armv7
+    # slice. Passing -platform_version ios 7.0 7.0 explicitly may be enough and
+    # would avoid building cctools at all.
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm dpkg-dev dpkg xz-utils curl
+
+      - name: Fetch iOS SDK
+        run: |
+          mkdir -p /tmp/sdks
+          curl -L --retry 3 -o /tmp/sdks.tar.gz https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
+          tar -xzf /tmp/sdks.tar.gz -C /tmp/sdks
+          SDK=$(find /tmp/sdks -maxdepth 2 -name "iPhoneOS9.3.sdk" -type d | head -1)
+          if [ -z "$SDK" ]; then SDK=$(find /tmp/sdks -maxdepth 2 -name "*.sdk" -type d | sort | head -1); fi
+          echo "SDK_PATH=$SDK" >> "$GITHUB_ENV"
+          echo "chosen SDK: $SDK"
+
+      - name: Try linking with ld64.lld and explicit platform_version
+        run: |
+          mkdir -p out
+          clang -target armv7-apple-ios7.0 -isysroot "$SDK_PATH" -Wno-deprecated-declarations -Wno-objc-root-class -c -o out/QQProbe.o qqprobe/QQProbe.xm
+          echo "--- object built ---"
+          ls -l out/
+
+          echo "=== attempt 1: ld64.lld with -platform_version ==="
+          clang -target armv7-apple-ios7.0 -isysroot "$SDK_PATH" \
+            -dynamiclib \
+            -install_name /Library/MobileSubstrate/DynamicLibraries/QQProbe.dylib \
+            -o out/a1.dylib out/QQProbe.o \
+            -framework Foundation -framework UIKit \
+            -undefined dynamic_lookup \
+            -fuse-ld=lld \
+            -Wl,-platform_version,ios,7.0,7.0 2>&1 | tail -25 || true
+          ls -l out/a1.dylib 2>/dev/null && echo "A1 OK" || echo "A1 failed"
+
+          echo
+          echo "=== attempt 2: direct ld64.lld invocation ==="
+          if [ -x /usr/bin/ld64.lld ]; then
+            /usr/bin/ld64.lld -dylib -arch armv7 \
+              -platform_version ios 7.0 7.0 \
+              -undefined dynamic_lookup \
+              -syslibroot "$SDK_PATH" \
+              -framework Foundation -framework UIKit \
+              -install_name /Library/MobileSubstrate/DynamicLibraries/QQProbe.dylib \
+              -o out/a2.dylib out/QQProbe.o 2>&1 | tail -25 || true
+            ls -l out/a2.dylib 2>/dev/null && echo "A2 OK" || echo "A2 failed"
+          else
+            echo "no /usr/bin/ld64.lld"
+            ls /usr/bin | grep -i lld | head
+          fi
+
+          echo
+          echo "=== pick whichever worked ==="
+          if [ -f out/a1.dylib ]; then cp out/a1.dylib out/QQProbe.dylib
+          elif [ -f out/a2.dylib ]; then cp out/a2.dylib out/QQProbe.dylib
+          fi
+          if [ -f out/QQProbe.dylib ]; then
+            dd if=out/QQProbe.dylib bs=1 count=8 2>/dev/null | od -An -tx1
+          else
+            echo "!! nothing linked"
+            exit 1
+          fi
+
+      - name: Build deb
+        run: |
+          ROOT=$PWD/debroot
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT/Library/MobileSubstrate/DynamicLibraries" "$ROOT/DEBIAN"
+          cp out/QQProbe.dylib "$ROOT/Library/MobileSubstrate/DynamicLibraries/"
+          cp qqprobe/QQProbe.plist "$ROOT/Library/MobileSubstrate/DynamicLibraries/"
+          printf 'Package: com.qqprobe.probe\nName: QQ Probe (read-only)\nVersion: 0.1\nArchitecture: iphoneos-arm\nDescription: Read-only ObjC runtime probe for QQ 6.2. Writes class and method dumps to /tmp. Modifies nothing.\nMaintainer: qqprobe\nAuthor: qqprobe\nSection: Tweaks\nDepends: mobilesubstrate, firmware (>= 7.0)\nInstalled-Size: 200\n' > "$ROOT/DEBIAN/control"
+          dpkg-deb -b "$ROOT" out/qqprobe.deb
+          ls -l out/
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqprobe-deb
+          path: out/*.deb
+          if-no-files-found: error
