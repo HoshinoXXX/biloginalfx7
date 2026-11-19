@@ -1,4 +1,4 @@
-name: Build QQ Probe (lld platform_version)
+﻿name: Build QQ Probe (lld platform_version)
 
 on:
   push:
@@ -40,7 +40,7 @@ jobs:
       - name: Try linking with ld64.lld and explicit platform_version
         run: |
           mkdir -p out
-          clang -target armv7-apple-ios7.0 -isysroot "$SDK_PATH" -Wno-deprecated-declarations -Wno-objc-root-class -c -o out/QQProbe.o qqprobe/QQProbe.xm
+          clang -x objective-c++ -target armv7-apple-ios7.0 -isysroot "$SDK_PATH" -Wno-deprecated-declarations -Wno-objc-root-class -c -o out/QQProbe.o qqprobe/QQProbe.xm
           echo "--- object built ---"
           ls -l out/
 
