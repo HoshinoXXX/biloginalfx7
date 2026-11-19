@@ -888,8 +888,9 @@ static void QQHSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
 // ---- 12.1 语音自动转文本：把灰度开关直接推成开启 ----
 // QQAppSetting -setVoiceToTextMask:state:  server 下发的灰度开关，
 // 推成 YES 之后客户端就会走语音识别流程。
-static void (*orig_setVoiceToTextMask)(id, SEL, id, BOOL);
-static void hook_setVoiceToTextMask(id self, SEL _cmd, id url, BOOL state) {
+// 实测 enc = v16@0:4@8i12 —— 第二参数是 int。
+static void (*orig_setVoiceToTextMask)(id, SEL, id, int);
+static void hook_setVoiceToTextMask(id self, SEL _cmd, id url, int state) {
     if (QQHOn(@"voicetotext", NO)) {
         QQHPLog(@"[fired] voiceToTextMask forced YES (was %d)", (int)state);
         state = YES;
@@ -906,8 +907,10 @@ static void hook_requestVoiceToText(id self, SEL _cmd) {
 
 // ---- 12.2 输入框提示文本自定义 ----
 // QQTextInputCell -setTextViewPlaceHolder:editingDefaultText:
-static void (*orig_setPlaceHolder)(id, SEL, id, BOOL);
-static void hook_setPlaceHolder(id self, SEL _cmd, id placeholder, BOOL editing) {
+// 实测 enc = v16@0:4@8@12 —— 第二个参数是对象，不是 BOOL。
+// 早先按 BOOL 声明会把 0/1 当指针传给原方法，直接崩。
+static void (*orig_setPlaceHolder)(id, SEL, id, id);
+static void hook_setPlaceHolder(id self, SEL _cmd, id placeholder, id editing) {
     if (QQHOn(@"phint", NO)) {
         NSString *custom = QQHStringPref(@"phintval");
         if ([custom length] > 0) {
@@ -921,19 +924,25 @@ static void hook_setPlaceHolder(id self, SEL _cmd, id placeholder, BOOL editing)
 // ---- 12.3 禁言时间精确到秒 ----
 // QQGroupMemberShutupEngine -requestSetMemberShutup:memUin:shutupDuration:setOrCancel:
 // 把 duration 换成面板里填的秒数。
-static void (*orig_requestShutup)(id, SEL, id, id, int, BOOL);
-static void hook_requestShutup(id self, SEL _cmd, id a, id b, int duration, BOOL set) {
+// 实测 enc = c32@0:4Q8Q16I24c28 —— 前两个参数是 8 字节整数，不是对象。
+// 用 id（4 字节）承接会让寄存器对错位，改成 unsigned long long。
+static char (*orig_requestShutup)(id, SEL, unsigned long long, unsigned long long,
+                                  unsigned int, char);
+static char hook_requestShutup(id self, SEL _cmd, unsigned long long a,
+                               unsigned long long b, unsigned int duration, char set) {
     if (QQHOn(@"muteSec", NO) && set) {
         NSString *s = QQHStringPref(@"muteval");
         if ([s length] > 0) {
             int v = [s intValue];
-            if (v > 0) {
-                QQHPLog(@"[fired] shutup duration %d -> %d", duration, v);
-                duration = v;
+            if (v > 0 && (unsigned int)v != duration) {
+                QQHPLog(@"[fired] shutup duration %u -> %d", duration, v);
+                duration = (unsigned int)v;
             }
         }
     }
-    if (orig_requestShutup) orig_requestShutup(self, _cmd, a, b, duration, set);
+    if (orig_requestShutup)
+        return orig_requestShutup(self, _cmd, a, b, duration, set);
+    return 0;
 }
 
 __attribute__((constructor))
