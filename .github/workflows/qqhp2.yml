@@ -27,8 +27,9 @@ jobs:
           done
           echo "--- layout (original preference bundle) ---"
           find qqhelperport/layout -type f | head -20 || true
-          test -f "qqhelperport/layout/Library/PreferenceBundles/QQHelper.bundle/QQHelper" \
-            || { echo "!! preference bundle binary missing from layout"; exit 1; }
+          test -f "qqhelperport/QQHelperPrefs.m" \
+            && test -f "qqhelperport/Resources/Root.plist" \
+            || { echo "!! preference bundle sources missing"; exit 1; }
           test -f "qqhelperport/layout/Library/PreferenceLoader/Preferences/QQHelper.plist" \
             || { echo "!! PreferenceLoader entry missing from layout"; exit 1; }
           echo "sources ok"
