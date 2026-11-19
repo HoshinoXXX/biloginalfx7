@@ -1,0 +1,105 @@
+name: Build QQ Probe (cctools linker)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qqprobe/**'
+      - '.github/workflows/qqprobe-cctools3.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    # macOS runners are not allocated for this account, so everything happens on
+    # ubuntu-latest. Chain of Linux obstacles solved here:
+    #   1. ARC needs libarclite, absent from the 9.x SDK below iOS 10.5
+    #      -> compile with MRC (the probe is a one-shot dumper)
+    #   2. ld64.lld rejects -arch armv7
+    #      -> use cctools-port's ld64, which understands 32-bit ARM
+    #   3. cctools configure hard-requires libdispatch
+    #      -> build swift-corelibs-libdispatch first
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Install build tools
+        run: |
+          sudo apt-get update -qq
+          sudo apt-get install -y -qq clang lld llvm dpkg-dev dpkg xz-utils curl build-essential autoconf automake libtool libblocksruntime-dev libssl-dev zlib1g-dev libncurses-dev libxml2-dev cmake
+          echo "--- BlocksRuntime ---"
+          ls /usr/include/Block.h 2>/dev/null || echo "no Block.h"
+
+      - name: Fetch iOS SDK
+        run: |
+          mkdir -p /tmp/sdks
+          curl -L --retry 3 -o /tmp/sdks.tar.gz https://github.com/theos/sdks/archive/refs/heads/master.tar.gz
+          tar -xzf /tmp/sdks.tar.gz -C /tmp/sdks
+          find /tmp/sdks -maxdepth 2 -name "*.sdk" -type d | sort | sed 's#.*/##'
+          SDK=$(find /tmp/sdks -maxdepth 2 -name "iPhoneOS9.3.sdk" -type d | head -1)
+          if [ -z "$SDK" ]; then SDK=$(find /tmp/sdks -maxdepth 2 -name "*.sdk" -type d | sort | head -1); fi
+          echo "SDK_PATH=$SDK" >> "$GITHUB_ENV"
+          echo "chosen SDK: $SDK"
+
+      - name: Build libdispatch
+        run: |
+          cd /tmp
+          git clone --depth 1 https://github.com/apple/swift-corelibs-libdispatch.git
+          cd swift-corelibs-libdispatch
+          cmake -B build -DCMAKE_INSTALL_PREFIX=/usr/local -DBUILD_TESTING=OFF -DCMAKE_BUILD_TYPE=Release
+          cmake --build build -j$(nproc)
+          sudo cmake --install build
+          sudo ldconfig
+          echo "--- dispatch installed ---"
+          ls /usr/local/lib/libdispatch* 2>/dev/null || echo "no libdispatch"
+          ls /usr/local/include/dispatch/dispatch.h 2>/dev/null || echo "no dispatch.h"
+
+      - name: Build cctools
+        run: |
+          cd /tmp
+          git clone --depth 1 https://github.com/tpoechtrager/cctools-port.git
+          cd cctools-port/cctools
+          ./configure --target=arm-apple-darwin --prefix=/usr/local
+          make -j$(nproc)
+          sudo make install
+          echo "--- installed ---"
+          ls /usr/local/bin/ | grep -i darwin | head -20
+          which arm-apple-darwin-ld || echo "no arm-apple-darwin-ld"
+
+      - name: Build dylib
+        run: |
+          mkdir -p out
+          clang --version | head -2
+          echo "SDK=$SDK_PATH"
+          clang -target armv7-apple-ios7.0 -isysroot "$SDK_PATH" -Wno-deprecated-declarations -Wno-objc-root-class -c -o out/QQProbe.o qqprobe/QQProbe.xm
+          ls -l out/
+          LD=/usr/local/bin/arm-apple-darwin-ld
+          echo "--- linking ---"
+          $LD -dylib -arch armv7 -ios_version_min 7.0 -undefined dynamic_lookup -framework Foundation -framework UIKit -syslibroot "$SDK_PATH" -install_name /Library/MobileSubstrate/DynamicLibraries/QQProbe.dylib -o out/QQProbe.dylib out/QQProbe.o 2>&1 | tail -30 || true
+          echo "--- result ---"
+          ls -l out/
+          if [ -f out/QQProbe.dylib ]; then
+            dd if=out/QQProbe.dylib bs=1 count=8 2>/dev/null | od -An -tx1
+          else
+            echo "!! no dylib produced"
+            exit 1
+          fi
+
+      - name: Build deb
+        run: |
+          ROOT=$PWD/debroot
+          rm -rf "$ROOT"
+          mkdir -p "$ROOT/Library/MobileSubstrate/DynamicLibraries" "$ROOT/DEBIAN"
+          cp out/QQProbe.dylib "$ROOT/Library/MobileSubstrate/DynamicLibraries/"
+          cp qqprobe/QQProbe.plist "$ROOT/Library/MobileSubstrate/DynamicLibraries/"
+          printf 'Package: com.qqprobe.probe\nName: QQ Probe (read-only)\nVersion: 0.1\nArchitecture: iphoneos-arm\nDescription: Read-only ObjC runtime probe for QQ 6.2. Writes class and method dumps to /tmp. Modifies nothing.\nMaintainer: qqprobe\nAuthor: qqprobe\nSection: Tweaks\nDepends: mobilesubstrate, firmware (>= 7.0)\nInstalled-Size: 200\n' > "$ROOT/DEBIAN/control"
+          dpkg-deb -b "$ROOT" out/qqprobe.deb
+          ls -l out/
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqprobe-deb
+          path: out/*.deb
+          if-no-files-found: error
