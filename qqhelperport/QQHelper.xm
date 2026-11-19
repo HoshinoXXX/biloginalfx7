@@ -210,6 +210,7 @@ static void (*orig_setFeedModel)(id, SEL, id);
 static void hook_setFeedModel(id self, SEL _cmd, id model) {
     QQHNoteCell(self);
     QQHNoteModel(model);
+    QQHNoteModelDetail(model);
     if (orig_setFeedModel) orig_setFeedModel(self, _cmd, model);
     if (!QQHOn(@"qzonead", YES)) return;
     if (!QQHIsGdtAdCell(self)) return;
@@ -265,6 +266,76 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
         }
     }
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
+}
+
+// ============ 9. 等级（资料卡格子）/ 在线文案（AIO 状态格）/ 广告模型诊断 ============
+
+// ---- 9.1 等级：UserSummaryQQLevelCell -setQQLevel: ----
+// 这是资料卡里那个显示 QQ 等级的格子。参数可能是 NSNumber 或自定义对象，
+// 所以先看类型：是 NSNumber 就替换成设定值，否则只记录。
+static void (*orig_setQQLevel)(id, SEL, id);
+static void hook_setQQLevel(id self, SEL _cmd, id lv) {
+    if (QQHOn(@"Switchqqdjxg", NO) && lv != nil) {
+        NSString *s = QQHStringPref(@"djxg");
+        if ([s length] > 0 && [lv isKindOfClass:[NSNumber class]]) {
+            int v = [s intValue];
+            if (v > 0) {
+                QQHPLog(@"[fired] setQQLevel %@ -> %d", lv, v);
+                lv = [NSNumber numberWithInt:v];
+            }
+        } else if ([s length] > 0) {
+            QQHPLog(@"[level] setQQLevel arg class = %@", NSStringFromClass([lv class]));
+        }
+    }
+    if (orig_setQQLevel) orig_setQQLevel(self, _cmd, lv);
+}
+
+// 旧的两个入口保留（有些版本走那条路）
+// QQLevelView -level / -setLevel: 已经在 §5 里 hook 过了。
+
+// ---- 9.2 在线文案：QQAIORichStatusSigCellView -setDetailText ----
+// 这个方法没有参数，文案是它内部从模型里拼出来的。所以先让它自己设好，
+// 再把视图里含「在线」的 UILabel 文本换掉。只在这一个类里做，范围可控。
+static void (*orig_setDetailText)(id, SEL);
+static void hook_setDetailText(id self, SEL _cmd) {
+    if (orig_setDetailText) orig_setDetailText(self, _cmd);
+    if (!QQHOn(@"onlinemodel", NO)) return;
+    if (![self isKindOfClass:[UIView class]]) return;
+
+    NSString *mine = QQHOnlineText();
+    __block int replaced = 0;
+    void (^walk)(UIView *) = ^(UIView *v) {
+        if ([v isKindOfClass:[UILabel class]]) {
+            UILabel *l = (UILabel *)v;
+            NSString *t = [l text];
+            if ([t length] > 0 && [t rangeOfString:@"在线"].location != NSNotFound) {
+                if (![t isEqualToString:mine]) {
+                    [l setText:mine];
+                    replaced++;
+                }
+            }
+        }
+        for (UIView *sub in [v subviews]) walk(sub);
+    };
+    walk((UIView *)self);
+    if (replaced > 0) QQHPLog(@"[fired] online label -> %@", mine);
+}
+
+// ---- 9.3 广告诊断：打印 feed model 的内容 ----
+static int QQHFeedModelDump = 0;
+static void QQHNoteModelDetail(id model) {
+    if (model == nil) return;
+    if (QQHFeedModelDump >= 3) return;
+    QQHFeedModelDump++;
+    QQHPLog(@"[feedmodel] %@", model);
+    // 试着读几个常见的广告标记字段
+    for (NSString *k in @[@"cellType", @"type", @"advType", @"isAdv", @"adType",
+                          @"contentType", @"feedType", @"actionType", @"mark"]) {
+        @try {
+            id v = [model valueForKey:k];
+            if (v != nil) QQHPLog(@"[feedmodel] %@ = %@", k, v);
+        } @catch (NSException *e) { }
+    }
 }
 
 // ============ 8. 在线显示具体机型 + 网络（onlinemodel，默认关闭）============
@@ -369,22 +440,11 @@ static void hook_updateZan(id self, SEL _cmd, int type, int zanType,
                            BOOL noted, int inc) {
     if (orig_updateZan) orig_updateZan(self, _cmd, type, zanType, noted, inc);
     if (!QQHOn(@"zan365", NO)) return;
-    if (noted) return;                     // 已经赞过就不重复
-    QQHPLog(@"[fired] 365 auto like scheduled");
-    // 走按钮自己的点击链路，最接近用户手动点一下
-    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(1.2 * NSEC_PER_SEC)),
-                   dispatch_get_main_queue(), ^{
-        @try {
-            if ([self isKindOfClass:[UIControl class]]) {
-                [(UIControl *)self sendActionsForControlEvents:
-                    UIControlEventTouchUpInside];
-            } else if ([self respondsToSelector:@selector(clickZan)]) {
-                [self performSelector:@selector(clickZan)];
-            }
-        } @catch (NSException *e) {
-            QQHPLog(@"zan exception: %@", e);
-        }
-    });
+    // 注意：之前在这里对按钮发 UIControlEventTouchUpInside，结果在资料卡上
+    // 误触发了别的控件，会莫名跳进「看谁赞过我」页面。已撤掉自动点击，
+    // 只保留观察日志，等确认正确的点赞入口（CardInfoEngine 的
+    // reqFavoriteUin:On:type:cookis:）再接上。
+    QQHPLog(@"[zan] zanButton updated noted=%d", (int)noted);
 }
 
 // ---- 7.3 强开红包：redpack ----
@@ -493,6 +553,55 @@ static BOOL hook_hasBubbleResource(id self, SEL _cmd, id arg) {
     return orig_hasBubbleResource ? orig_hasBubbleResource(self, _cmd, arg) : NO;
 }
 
+// ============ 4c. 群成员列表 / 视频接收 修复（URL 层）============
+// 这两个问题的共同点是：老版本请求的地址现在不通（http、或被换掉的旧域名）。
+// 复用图片修复那套已验证的入口，只按开关各管一段。
+static BOOL QQHContainsAny(NSString *s, NSArray *needles) {
+    for (NSString *n in needles) {
+        if ([s rangeOfString:n].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
+static NSURL *QQHRepairURL(NSURL *url) {
+    if (url == nil) return url;
+    NSString *s = [url absoluteString];
+
+    // 群成员列表 / @ 选人列表
+    if (QQHOn(@"gmfix", NO) &&
+        QQHContainsAny(s, @[@"/qzone/", @"/group/", @"/cgi-bin/",
+                            @"qun.qq.com", @"web.qun.qq.com",
+                            @"group.qq.com", @"ti.qq.com"])) {
+        NSString *fixed = QQHFixImageURLString(s);
+        if (![fixed isEqualToString:s]) {
+            NSURL *nu = [NSURL URLWithString:fixed];
+            if (nu != nil) {
+                QQHPLog(@"[gmfix] %s", [[nu absoluteString] UTF8String]);
+                return nu;
+            }
+        }
+        return url;
+    }
+
+    // 视频（8.5 之前点开视频加载失败）
+    if (QQHOn(@"vidfix", NO) &&
+        QQHContainsAny(s, @[@".mp4", @".m4v", @".mov", @"video",
+                            @"vweixinthumb", @"vweixin", @"v.qq.com",
+                            @"shortvideo", @"short_video"])) {
+        NSString *fixed = QQHFixImageURLString(s);
+        if (![fixed isEqualToString:s]) {
+            NSURL *nu = [NSURL URLWithString:fixed];
+            if (nu != nil) {
+                QQHPLog(@"[vidfix] %s", [[nu absoluteString] UTF8String]);
+                return nu;
+            }
+        }
+        return url;
+    }
+
+    return url;
+}
+
 // ============ 5. QQ 等级修改 / 余额修改（仅本地显示）============
 // 原面板已有 Switchqqdjxg / djxg / Switchqqyexg / yexg 四个 key，直接接上。
 static NSString *QQHStringPref(NSString *key) {
@@ -562,10 +671,14 @@ static void QQHNoteImageURL(NSString *s, const char *via) {
     QQHPLog(@"[img] via=%s url=%s", via, [s UTF8String]);
 }
 
+static NSURL *QQHRepairURL(NSURL *url);   // 前向声明
+
 static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
     if (url == nil) return url;
     NSString *s = [url absoluteString];
     QQHNoteImageURL(s, via);
+    url = QQHRepairURL(url);          // 群成员列表 / 视频修复
+    s = [url absoluteString];
     if (!QQHOn(@"qzpic", YES)) return url;
     if (!QQHLooksLikeImageURL(s)) return url;
     NSString *fixed = QQHFixImageURLString(s);
@@ -930,6 +1043,17 @@ static void QQHInit(void) {
             } else {
                 QQHPLog(@"RichStateModel missing");
             }
+            // 9. 资料卡等级格子 / AIO 在线文案
+            Class lvc = NSClassFromString(@"UserSummaryQQLevelCell");
+            if (lvc != Nil)
+                QQHSwizzle(lvc, @selector(setQQLevel:),
+                           (IMP)&hook_setQQLevel, (IMP *)&orig_setQQLevel);
+
+            Class rsCell = NSClassFromString(@"QQAIORichStatusSigCellView");
+            if (rsCell != Nil)
+                QQHSwizzle(rsCell, @selector(setDetailText),
+                           (IMP)&hook_setDetailText, (IMP *)&orig_setDetailText);
+
             // 设备名与网络只在开关打开时才算，避免每次启动多做无用功
             if (QQHOn(@"onlinemodel", NO))
                 QQHPLog(@"online model preview: %@", QQHOnlineText());
