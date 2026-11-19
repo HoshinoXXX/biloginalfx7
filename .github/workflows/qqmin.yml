@@ -1,0 +1,59 @@
+name: Build QQMin (injection test)
+
+on:
+  push:
+    branches: [ main, master ]
+    paths:
+      - 'qqmin/**'
+      - '.github/workflows/qqmin.yml'
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Verify sources
+        run: |
+          set -e
+          ls -la qqmin/
+          for f in Makefile control QQMin.xm QQMin.plist; do
+            [ -f "qqmin/$f" ] || { echo "!! missing $f"; exit 1; }
+          done
+          echo "sources ok"
+
+      - name: Install Theos
+        run: |
+          set -e
+          export THEOS=$HOME/theos
+          git clone --recursive --depth 1 https://github.com/theos/theos.git "$THEOS"
+          rm -rf "$THEOS/sdks"
+          git clone --depth 1 https://github.com/theos/sdks.git "$THEOS/sdks"
+          brew install ldid || true
+          echo "THEOS=$THEOS" >> "$GITHUB_ENV"
+
+      - name: Patch liblaunch in 9.3 SDK
+        run: |
+          set -e
+          SDK="$THEOS/sdks/iPhoneOS9.3.sdk"
+          TBD="$SDK/usr/lib/system/liblaunch.tbd"
+          grep -rl 'liblaunch' "$SDK" --include='*.tbd' 2>/dev/null | while read -r f; do
+            [ "$f" = "$TBD" ] || sed -i '' '/liblaunch/d' "$f" || true
+          done
+          printf -- '--- !tapi-tbd-v2\narchs: [ armv7 ]\nplatform: ios\ntargets: [ armv7-ios ]\ninstall-name: "/usr/lib/system/liblaunch.dylib"\ncurrent-version: 1\ncompatibility-version: 1\nexports:\n  - archs: [ armv7 ]\n    symbols: [ ]\n' > "$TBD"
+
+      - name: Build
+        working-directory: qqmin
+        run: |
+          make package FINALPACKAGE=1 DEBUG=0 2>&1 | tail -40
+          ls -l packages/ || true
+
+      - name: Upload deb
+        uses: actions/upload-artifact@v4
+        with:
+          name: qqmin-deb
+          path: qqmin/packages/*.deb
+          if-no-files-found: error
