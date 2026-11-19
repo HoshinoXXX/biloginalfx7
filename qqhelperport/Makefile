@@ -12,27 +12,16 @@ export ADDITIONAL_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
 
 include $(THEOS)/makefiles/common.mk
 
-# ---------------------------------------------------------------- tweak
-TWEAK_NAME = QQHelperPort
-QQHelperPort_FILES = QQHelperPort.xm
-# ARCHS must be repeated per target: adding bundle.mk resets the global value,
-# which made the build try arm64 and fail against the simulator-flavoured tbd
-# stubs in the 9.3 SDK.
-QQHelperPort_ARCHS      = armv7
-QQHelperPort_CFLAGS     = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incompatible-pointer-types
-QQHelperPort_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
-QQHelperPort_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
-QQHelperPort_FRAMEWORKS = Foundation UIKit
-QQHelperPort_LDFLAGS    = -undefined dynamic_lookup
-
-# ------------------------------------------------- preference bundle
-BUNDLE_NAME = QQHelperPortPrefs
-QQHelperPortPrefs_FILES = QQHelperPortPrefs.m
-QQHelperPortPrefs_ARCHS = armv7
-QQHelperPortPrefs_INSTALL_PATH = /Library/PreferenceBundles
-QQHelperPortPrefs_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
-QQHelperPortPrefs_FRAMEWORKS = Foundation UIKit
-QQHelperPortPrefs_LDFLAGS = -undefined dynamic_lookup
+# This package TAKES OVER apt.cydiakk.qqhelper: same package name, higher
+# version, same dylib name, and it ships the original preference bundle so that
+# dpkg's upgrade does not delete the settings panel.
+TWEAK_NAME = QQHelper
+QQHelper_FILES = QQHelper.xm
+QQHelper_ARCHS      = armv7
+QQHelper_CFLAGS     = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incompatible-pointer-types
+QQHelper_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
+QQHelper_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
+QQHelper_FRAMEWORKS = Foundation UIKit
+QQHelper_LDFLAGS    = -undefined dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
-include $(THEOS_MAKE_PATH)/bundle.mk
