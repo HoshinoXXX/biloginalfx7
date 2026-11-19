@@ -1096,20 +1096,7 @@ static void QQHInit(void) {
             }
 
             // 带 block 的变体：SDWebImage 实际用的是这些
-            if (sess != Nil) {
-                QQHSwizzle(sess, @selector(dataTaskWithURL:completionHandler:),
-                           (IMP)&hook_dataTaskWithURLHandler,
-                           (IMP *)&orig_dataTaskWithURLHandler);
-                QQHSwizzle(sess, @selector(dataTaskWithRequest:completionHandler:),
-                           (IMP)&hook_dataTaskWithReqHandler,
-                           (IMP *)&orig_dataTaskWithReqHandler);
-                QQHSwizzle(sess, @selector(downloadTaskWithURL:),
-                           (IMP)&hook_downloadTaskWithURL,
-                           (IMP *)&orig_downloadTaskWithURL);
-                QQHSwizzle(sess, @selector(downloadTaskWithURL:completionHandler:),
-                           (IMP)&hook_downloadTaskWithURLHandler,
-                           (IMP *)&orig_downloadTaskWithURLHandler);
-            }
+            // 带 block 的 NSURLSession 变体一并移除（同属 CFNetwork 依赖）
         }
 
         // 5. 等级修改 / 余额修改
