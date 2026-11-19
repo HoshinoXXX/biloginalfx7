@@ -304,6 +304,26 @@ static void QQHProbeImageURL(NSString *s) {
     [t resume];
 }
 
+// ============ 10d. 根治：强制 JPEG（去掉 WebP 转换）============
+// 实测证据：qpic 的 URL 带 &t=5 时 CDN 回 image/webp（94392 字节），
+// 把 t 改成 0 就回 image/jpeg（143335 字节）。iOS 10 的 UIImage 和
+// QQ 6.2 自带的 SDWebImage 都不支持 WebP，所以图片下载成功后解码失败，
+// 进度条永远停在 0%。改一个字符即可根治。
+static NSString *QQHForceJPEG(NSString *s) {
+    if ([s length] == 0) return s;
+    if ([s rangeOfString:@"qpic.cn"].location == NSNotFound &&
+        [s rangeOfString:@"gtimg.cn"].location == NSNotFound) return s;
+    if ([s rangeOfString:@"&t=5"].location == NSNotFound) return s;
+
+    NSString *out = [s stringByReplacingOccurrencesOfString:@"&t=5"
+                                                 withString:@"&t=0"];
+    if (![out isEqualToString:s]) {
+        QQHPLog(@"[jpeg] %@", [out length] > 90
+                ? [[out substringToIndex:90] stringByAppendingString:@"..."] : out);
+    }
+    return out;
+}
+
 // ============ 10c. NSURLConnection 的类方法入口 ============
 // SDWebImage 的老版本用 +connectionWithRequest:delegate: 发请求，
 // 之前只 hook 了实例方法，所以这条路径一直没被看到。
@@ -325,7 +345,16 @@ static id (*orig_connInitStart)(id, SEL, id, id, BOOL);
 static id hook_connInitStart(id self, SEL _cmd, id req, id delegate, BOOL startNow) {
     NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
     QQHNoteImageURL([u absoluteString], "conn.init+start");
-    if (QQHOn(@"qzpic", YES)) QQHProbeImageURL([u absoluteString]);
+
+    // 关键一步：把 t=5（WebP）改成 t=0（JPEG），否则 iOS 10 解不出来
+    if (QQHOn(@"qzpic", YES) && u != nil &&
+        [req isKindOfClass:[NSMutableURLRequest class]]) {
+        NSString *fixed = QQHForceJPEG([u absoluteString]);
+        if (![fixed isEqualToString:[u absoluteString]]) {
+            NSURL *nu = [NSURL URLWithString:fixed];
+            if (nu != nil) [(NSMutableURLRequest *)req setURL:nu];
+        }
+    }
     return orig_connInitStart ? orig_connInitStart(self, _cmd, req, delegate, startNow) : nil;
 }
 
@@ -802,6 +831,13 @@ static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
     QQHNoteImageURL(s, via);
     url = QQHRepairURL(url);          // 群成员列表 / 视频修复
     s = [url absoluteString];
+    if (QQHOn(@"qzpic", YES)) {
+        NSString *jpeg = QQHForceJPEG(s);
+        if (![jpeg isEqualToString:s]) {
+            NSURL *nu = [NSURL URLWithString:jpeg];
+            if (nu != nil) { url = nu; s = jpeg; }
+        }
+    }
     if (!QQHOn(@"qzpic", YES)) return url;
     if (!QQHLooksLikeImageURL(s)) return url;
     NSString *fixed = QQHFixImageURLString(s);
