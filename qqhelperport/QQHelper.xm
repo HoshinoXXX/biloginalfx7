@@ -425,10 +425,11 @@ static void hook_setShouldShowPendant(id self, SEL _cmd, BOOL show) {
     if (orig_setShouldShowPendant) orig_setShouldShowPendant(self, _cmd, show);
 }
 
-static id (*orig_pendantID)(id, SEL);
-static id hook_pendantID(id self, SEL _cmd) {
-    if (QQHOn(@"gj", NO)) return nil;
-    return orig_pendantID ? orig_pendantID(self, _cmd) : nil;
+// 实测 enc = q8@0:4，真正回传 long long（挂件 id），不是对象。
+static long long (*orig_pendantID)(id, SEL);
+static long long hook_pendantID(id self, SEL _cmd) {
+    if (QQHOn(@"gj", NO)) return 0;
+    return orig_pendantID ? orig_pendantID(self, _cmd) : 0;
 }
 
 // ---- 6.3 屏蔽礼物动画：lw ----
@@ -442,10 +443,11 @@ static void hook_startAnimation(id self, SEL _cmd) {
 }
 
 // ---- 6.4 屏蔽表情联想：bqlx ----
-static void (*orig_loadFace)(id, SEL, id, BOOL, id);
-static void hook_loadFace(id self, SEL _cmd, id face, BOOL cloud, id kw) {
-    if (QQHOn(@"bqlx", NO)) return;
-    if (orig_loadFace) orig_loadFace(self, _cmd, face, cloud, kw);
+// 实测 enc = @20@0:4@8c12@16，回传对象 —— 不是 void。
+static id (*orig_loadFace)(id, SEL, id, char, id);
+static id hook_loadFace(id self, SEL _cmd, id face, char cloud, id kw) {
+    if (QQHOn(@"bqlx", NO)) return nil;
+    return orig_loadFace ? orig_loadFace(self, _cmd, face, cloud, kw) : nil;
 }
 
 // ---- 6.5 屏蔽个性字体 / 大小字体：gxzt / dxzt ----
@@ -522,8 +524,8 @@ static int hook_levelGetter(id self, SEL _cmd) {
 }
 
 // ---- 余额：PayTool +formatQbBalance: / +formatQdBalance: ----
-static id (*orig_formatQb)(Class, SEL, id);
-static id hook_formatQb(Class self, SEL _cmd, id raw) {
+static id (*orig_formatQb)(Class, SEL, int);
+static id hook_formatQb(Class self, SEL _cmd, int raw) {
     if (QQHOn(@"Switchqqyexg", NO)) {
         NSString *s = QQHStringPref(@"yexg");
         if ([s length] > 0) {
@@ -531,11 +533,11 @@ static id hook_formatQb(Class self, SEL _cmd, id raw) {
             return s;
         }
     }
-    return orig_formatQb ? orig_formatQb(self, _cmd, raw) : raw;
+    return orig_formatQb ? orig_formatQb(self, _cmd, raw) : nil;
 }
 
-static id (*orig_formatQd)(Class, SEL, id);
-static id hook_formatQd(Class self, SEL _cmd, id raw) {
+static id (*orig_formatQd)(Class, SEL, int);
+static id hook_formatQd(Class self, SEL _cmd, int raw) {
     if (QQHOn(@"Switchqqyexg", NO)) {
         NSString *s = QQHStringPref(@"yexg");
         if ([s length] > 0) {
@@ -543,7 +545,7 @@ static id hook_formatQd(Class self, SEL _cmd, id raw) {
             return s;
         }
     }
-    return orig_formatQd ? orig_formatQd(self, _cmd, raw) : raw;
+    return orig_formatQd ? orig_formatQd(self, _cmd, raw) : nil;
 }
 
 // ============ 4b. 图片请求的统一入口覆盖 + 诊断日志 ============
