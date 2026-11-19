@@ -1,4 +1,4 @@
-﻿export ARCHS = armv7
+export ARCHS = armv7
 export TARGET = iphone:clang:9.3:7.0
 
 WARNFLAGS = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
@@ -15,6 +15,10 @@ include $(THEOS)/makefiles/common.mk
 # ---------------------------------------------------------------- tweak
 TWEAK_NAME = QQHelperPort
 QQHelperPort_FILES = QQHelperPort.xm
+# ARCHS must be repeated per target: adding bundle.mk resets the global value,
+# which made the build try arm64 and fail against the simulator-flavoured tbd
+# stubs in the 9.3 SDK.
+QQHelperPort_ARCHS      = armv7
 QQHelperPort_CFLAGS     = -fobjc-arc $(WARNFLAGS) $(MINVER) -Wno-incompatible-pointer-types
 QQHelperPort_OBJCFLAGS  = $(WARNFLAGS) $(MINVER)
 QQHelperPort_OBJCCFLAGS = $(WARNFLAGS) $(MINVER)
@@ -24,6 +28,7 @@ QQHelperPort_LDFLAGS    = -undefined dynamic_lookup
 # ------------------------------------------------- preference bundle
 BUNDLE_NAME = QQHelperPortPrefs
 QQHelperPortPrefs_FILES = QQHelperPortPrefs.m
+QQHelperPortPrefs_ARCHS = armv7
 QQHelperPortPrefs_INSTALL_PATH = /Library/PreferenceBundles
 QQHelperPortPrefs_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
 QQHelperPortPrefs_FRAMEWORKS = Foundation UIKit
