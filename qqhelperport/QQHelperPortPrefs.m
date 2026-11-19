@@ -1,26 +1,37 @@
 // QQHelperPortPrefs - Settings panel for QQHelperPort
 //
-// A plain PSListController driven by Root.plist, so every switch is declared
-// in one place and stored in NSUserDefaults under com.qqhelperport.tweak.
-// The tweak reads the same domain, with /tmp/qqhp-no-* files still usable as an
-// override for debugging.
+// Theos's vendored Preferences headers (PSTableCell.h / PSSpecifier.h) do not
+// parse with current clang - they fail with "expected ':'" and the whole
+// `Preferences` module fails to build. Rather than fight them, the two classes
+// this panel actually needs are declared here and resolved at load time
+// through -undefined dynamic_lookup.
 
-#import <Preferences/PSListController.h>
-#import <Preferences/PSSpecifier.h>
+#import <UIKit/UIKit.h>
+
+// Minimal forward declarations of the Preferences framework classes we use.
+@interface PSListController : UIViewController {
+    NSArray *_specifiers;
+}
+- (NSArray *)specifiers;
+- (id)loadSpecifiersFromPlistName:(NSString *)name target:(id)target;
+@end
+
+@interface PSSpecifier : NSObject
+@end
 
 @interface QQHelperPortRootListController : PSListController
 @end
 
 @implementation QQHelperPortRootListController
 
-- (id)specifiers {
+- (NSArray *)specifiers {
     if (_specifiers == nil) {
         _specifiers = [[self loadSpecifiersFromPlistName:@"Root" target:self] retain];
     }
     return _specifiers;
 }
 
-// Show the live log path so it can be checked over SSH.
+// Value shown by the "log file" row.
 - (id)logPath:(PSSpecifier *)spec {
     return @"/tmp/qqhp.log";
 }

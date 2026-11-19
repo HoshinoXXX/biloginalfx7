@@ -1,4 +1,4 @@
-export ARCHS = armv7
+﻿export ARCHS = armv7
 export TARGET = iphone:clang:9.3:7.0
 
 WARNFLAGS = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
@@ -27,7 +27,6 @@ QQHelperPortPrefs_FILES = QQHelperPortPrefs.m
 QQHelperPortPrefs_INSTALL_PATH = /Library/PreferenceBundles
 QQHelperPortPrefs_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
 QQHelperPortPrefs_FRAMEWORKS = Foundation UIKit
-QQHelperPortPrefs_PRIVATE_FRAMEWORKS = Preferences
 QQHelperPortPrefs_LDFLAGS = -undefined dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
