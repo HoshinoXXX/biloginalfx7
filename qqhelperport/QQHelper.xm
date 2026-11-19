@@ -273,6 +273,30 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
 }
 
+// ============ 10c. NSURLConnection 的类方法入口 ============
+// SDWebImage 的老版本用 +connectionWithRequest:delegate: 发请求，
+// 之前只 hook 了实例方法，所以这条路径一直没被看到。
+static id (*orig_connClassMethod)(Class, SEL, id, id);
+static id hook_connClassMethod(Class self, SEL _cmd, id req, id delegate) {
+    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
+    QQHNoteImageURL([u absoluteString], "conn.class+delegate");
+    return orig_connClassMethod ? orig_connClassMethod(self, _cmd, req, delegate) : nil;
+}
+
+static void (*orig_connAsync)(Class, SEL, id, id, id);
+static void hook_connAsync(Class self, SEL _cmd, id req, id queue, id handler) {
+    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
+    QQHNoteImageURL([u absoluteString], "conn.async");
+    if (orig_connAsync) orig_connAsync(self, _cmd, req, queue, handler);
+}
+
+static id (*orig_connInitStart)(id, SEL, id, id, BOOL);
+static id hook_connInitStart(id self, SEL _cmd, id req, id delegate, BOOL startNow) {
+    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
+    QQHNoteImageURL([u absoluteString], "conn.init+start");
+    return orig_connInitStart ? orig_connInitStart(self, _cmd, req, delegate, startNow) : nil;
+}
+
 // ============ 10b. QQ空间图片下载器 MQZMutiplePicDownloader ============
 // 完整的类名是 MQZMutiplePicDownloader（MQZ = Mobile QZone）。
 // 图片既不走 NSURLSession 也不走 BDH，而是走它。
@@ -1163,6 +1187,17 @@ static void QQHInit(void) {
                            (IMP)&hook_mqzStop, (IMP *)&orig_mqzStop);
             } else {
                 QQHPLog(@"MQZMutiplePicDownloader missing");
+            }
+        }
+
+        // 10c. NSURLConnection 类方法入口
+        {
+            Class c = NSClassFromString(@"NSURLConnection");
+            if (c != Nil) {
+                QQHSwizzle(c, @selector(connectionWithRequest:delegate:),
+                           (IMP)&hook_connClassMethod, (IMP *)&orig_connClassMethod);
+                QQHSwizzle(c, @selector(sendAsynchronousRequest:queue:completionHandler:),
+                           (IMP)&hook_connAsync, (IMP *)&orig_connAsync);
             }
         }
 
