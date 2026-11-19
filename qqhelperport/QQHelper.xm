@@ -209,6 +209,52 @@ static void hook_setFeedModel(id self, SEL _cmd, id model) {
     }
 }
 
+// ==================== 4. QQ空间图片修复（http -> https）====================
+// 用户反馈：QQ空间动态里的图片无法载入。QQ 6.2 的图片 URL 大量是 http:// 的老域名，
+// iOS 10 下会被 ATS 或被服务端跳转掉。在请求构造处统一改成 https 即可。
+// 只处理图片类 URL，避免动其它请求。
+static BOOL QQHLooksLikeImageURL(NSString *s) {
+    if ([s length] < 8) return NO;
+    if ([s hasPrefix:@"https://"]) return NO;         // 已经是 https
+    if (![s hasPrefix:@"http://"] && ![s hasPrefix:@"//"]) return NO;
+
+    static NSArray *hosts = nil;
+    if (hosts == nil) {
+        hosts = @[@"qpic.cn", @"qlogo.cn", @"gtimg.cn", @"qq.com", @"qzone.qq.com",
+                  @"hdslb.com", @"bilibili.com", @"tencentcloudapi.com"];
+    }
+    for (NSString *h in hosts) {
+        if ([s rangeOfString:h].location != NSNotFound) return YES;
+    }
+    return NO;
+}
+
+static NSString *QQHFixImageURLString(NSString *s) {
+    if ([s hasPrefix:@"//"]) return [@"https:" stringByAppendingString:s];
+    if ([s hasPrefix:@"http://"]) {
+        return [@"https://" stringByAppendingString:[s substringFromIndex:7]];
+    }
+    return s;
+}
+
+static id (*orig_requestWithURL)(Class, SEL, NSURL *);
+static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
+    if (QQHOn(@"qzpic", YES) && url != nil) {
+        NSString *s = [url absoluteString];
+        if (QQHLooksLikeImageURL(s)) {
+            NSString *fixed = QQHFixImageURLString(s);
+            if (![fixed isEqualToString:s]) {
+                NSURL *nu = [NSURL URLWithString:fixed];
+                if (nu != nil) {
+                    QQHPLog(@"[fired] image url -> %@", fixed);
+                    return orig_requestWithURL ? orig_requestWithURL(self, _cmd, nu) : nil;
+                }
+            }
+        }
+    }
+    return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
+}
+
 // ============================ 安装辅助 ============================
 static void QQHSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     if (cls == Nil || sel == NULL) return;
@@ -295,6 +341,27 @@ static void QQHInit(void) {
                            (IMP)&hook_setFeedModel, (IMP *)&orig_setFeedModel);
             } else {
                 QQHPLog(@"QzoneFeedCell missing");
+            }
+        }
+
+        // 4. QQ空间图片修复
+        {
+            Class nsurlreq = NSClassFromString(@"NSURLRequest");
+            if (nsurlreq != Nil) {
+                Class meta = object_getClass(nsurlreq);
+                if (meta != Nil) {
+                    Method m = class_getClassMethod(nsurlreq,
+                                                    @selector(requestWithURL:));
+                    if (m != NULL) {
+                        QQHPLog(@"hook class    NSURLRequest requestWithURL:  enc=%s",
+                                method_getTypeEncoding(m) ?: "?");
+                        orig_requestWithURL = (id (*)(Class, SEL, NSURL *))
+                            method_getImplementation(m);
+                        method_setImplementation(m, (IMP)&hook_requestWithURL);
+                    } else {
+                        QQHPLog(@"NSURLRequest requestWithURL: not found");
+                    }
+                }
             }
         }
 
