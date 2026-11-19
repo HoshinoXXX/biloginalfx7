@@ -273,6 +273,42 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
 }
 
+// ============ 10. BDH 下载层诊断（图片 / 视频 真正走的通道）============
+// 实测图片视频完全不走 NSURLSession，而是走 QQ 自研的 BDHHttp 栈：
+//   BDHHttpConnection 管连接与发送，BDHHttpStream 管 socket 与 HTTP 封包。
+// 这里先只打日志，看清连的哪台主机、fileId 是什么、失败时错误码多少。
+static id (*orig_bdhInitHost)(id, SEL, id);
+static id hook_bdhInitHost(id self, SEL _cmd, id host) {
+    QQHPLog(@"[bdh] connect host=%@", host);
+    return orig_bdhInitHost ? orig_bdhInitHost(self, _cmd, host) : nil;
+}
+
+static id (*orig_picFileId)(id, SEL);
+static id hook_picFileId(id self, SEL _cmd) {
+    id r = orig_picFileId ? orig_picFileId(self, _cmd) : nil;
+    QQHPLog(@"[bdh] pic fileId=%@", r);
+    return r;
+}
+
+static void (*orig_notifyHttpError)(id, SEL, id);
+static void hook_notifyHttpError(id self, SEL _cmd, id err) {
+    QQHPLog(@"[bdh] HTTP ERROR: %@", err);
+    if (orig_notifyHttpError) orig_notifyHttpError(self, _cmd, err);
+}
+
+static void (*orig_setHttpError)(id, SEL, int);
+static void hook_setHttpError(id self, SEL _cmd, int code) {
+    QQHPLog(@"[bdh] httpError code=%d", code);
+    if (orig_setHttpError) orig_setHttpError(self, _cmd, code);
+}
+
+static int (*orig_iStatusCode)(id, SEL);
+static int hook_iStatusCode(id self, SEL _cmd) {
+    int r = orig_iStatusCode ? orig_iStatusCode(self, _cmd) : 0;
+    if (r != 0) QQHPLog(@"[bdh] statusCode=%d", r);
+    return r;
+}
+
 // ============ 9. 等级（资料卡格子）/ 在线文案（AIO 状态格）/ 广告模型诊断 ============
 
 // ---- 9.1 等级：UserSummaryQQLevelCell -setQQLevel: ----
@@ -1065,6 +1101,31 @@ static void QQHInit(void) {
             // 设备名与网络只在开关打开时才算，避免每次启动多做无用功
             if (QQHOn(@"onlinemodel", NO))
                 QQHPLog(@"online model preview: %@", QQHOnlineText());
+        }
+
+        // 10. BDH 下载层诊断
+        {
+            Class c = NSClassFromString(@"BDHHttpConnection");
+            if (c != Nil)
+                QQHSwizzle(c, @selector(initWithHostName:),
+                           (IMP)&hook_bdhInitHost, (IMP *)&orig_bdhInitHost);
+
+            c = NSClassFromString(@"BasePicDownloadReqInfo");
+            if (c != Nil)
+                QQHSwizzle(c, @selector(fileId), (IMP)&hook_picFileId,
+                           (IMP *)&orig_picFileId);
+
+            c = NSClassFromString(@"BDHHttpStream");
+            if (c != Nil) {
+                QQHSwizzle(c, @selector(notifyHttpError:),
+                           (IMP)&hook_notifyHttpError, (IMP *)&orig_notifyHttpError);
+                QQHSwizzle(c, @selector(setHttpError:),
+                           (IMP)&hook_setHttpError, (IMP *)&orig_setHttpError);
+                QQHSwizzle(c, @selector(iStatusCode),
+                           (IMP)&hook_iStatusCode, (IMP *)&orig_iStatusCode);
+            } else {
+                QQHPLog(@"BDHHttpStream missing");
+            }
         }
 
         QQHDumpPrefs();
