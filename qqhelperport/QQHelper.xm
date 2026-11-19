@@ -204,6 +204,7 @@ static void hook_layoutFeedView(id self, SEL _cmd) {
 static void (*orig_setFeedModel)(id, SEL, id);
 static void hook_setFeedModel(id self, SEL _cmd, id model) {
     QQHNoteCell(self);
+    QQHNoteModel(model);
     if (orig_setFeedModel) orig_setFeedModel(self, _cmd, model);
     if (!QQHOn(@"qzonead", YES)) return;
     if (!QQHIsGdtAdCell(self)) return;
@@ -378,12 +379,81 @@ static id hook_connInit(id self, SEL _cmd, id req, id delegate) {
     return orig_connInit ? orig_connInit(self, _cmd, req, delegate) : nil;
 }
 
+// ---- NSURLSession 的带 block 变体（SDWebImage 实际走这些）----
+static id (*orig_dataTaskWithURLHandler)(id, SEL, NSURL *, id);
+static id hook_dataTaskWithURLHandler(id self, SEL _cmd, NSURL *url, id handler) {
+    NSURL *u = QQHFixIfNeeded(url, "session.url+cb");
+    return orig_dataTaskWithURLHandler
+        ? orig_dataTaskWithURLHandler(self, _cmd, u, handler) : nil;
+}
+
+static id (*orig_dataTaskWithReqHandler)(id, SEL, id, id);
+static id hook_dataTaskWithReqHandler(id self, SEL _cmd, id req, id handler) {
+    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
+    QQHNoteImageURL([u absoluteString], "session.req+cb");
+    if (QQHOn(@"qzpic", YES) && u != nil &&
+        QQHLooksLikeImageURL([u absoluteString])) {
+        NSURL *nu = [NSURL URLWithString:QQHFixImageURLString([u absoluteString])];
+        if (nu != nil && [req isKindOfClass:[NSMutableURLRequest class]]) {
+            [(NSMutableURLRequest *)req setURL:nu];
+        }
+    }
+    return orig_dataTaskWithReqHandler
+        ? orig_dataTaskWithReqHandler(self, _cmd, req, handler) : nil;
+}
+
+static id (*orig_downloadTaskWithURL)(id, SEL, NSURL *);
+static id hook_downloadTaskWithURL(id self, SEL _cmd, NSURL *url) {
+    NSURL *u = QQHFixIfNeeded(url, "session.dl");
+    return orig_downloadTaskWithURL ? orig_downloadTaskWithURL(self, _cmd, u) : nil;
+}
+
+static id (*orig_downloadTaskWithURLHandler)(id, SEL, NSURL *, id);
+static id hook_downloadTaskWithURLHandler(id self, SEL _cmd, NSURL *url, id handler) {
+    NSURL *u = QQHFixIfNeeded(url, "session.dl+cb");
+    return orig_downloadTaskWithURLHandler
+        ? orig_downloadTaskWithURLHandler(self, _cmd, u, handler) : nil;
+}
+
+// ---- 等级：-setLevel: 才是真正会被调用的入口 ----
+static void (*orig_setLevel)(id, SEL, int);
+static void hook_setLevel(id self, SEL _cmd, int lv) {
+    if (QQHOn(@"Switchqqdjxg", NO)) {
+        NSString *s = QQHStringPref(@"djxg");
+        if ([s length] > 0) {
+            int v = [s intValue];
+            if (v > 0) {
+                QQHPLog(@"[fired] setLevel forced %d (was %d)", v, lv);
+                lv = v;
+            }
+        }
+    }
+    if (orig_setLevel) orig_setLevel(self, _cmd, lv);
+}
+
+// ---- 打印 QQHelper 偏好域的实际内容 ----
+static void QQHDumpPrefs(void) {
+    NSDictionary *d = [[NSUserDefaults standardUserDefaults]
+                       persistentDomainForName:@"QQHelper"];
+    QQHPLog(@"QQHelper prefs: %@", d);
+}
+
 // ---------------- 广告 cell 诊断：打印动态列表里的真实类名 ----------------
 static int QQHCellLogCount = 0;
 static void QQHNoteCell(id cell) {
     if (QQHCellLogCount >= 40) return;
     QQHCellLogCount++;
     QQHPLog(@"[cell] %@", NSStringFromClass([cell class]));
+}
+
+// 广告没法靠 cell 类辨识（实测所有 cell 都叫 QzoneFeedCell），
+// 只能看喂进来的数据模型是什么类型。
+static int QQHModelLogCount = 0;
+static void QQHNoteModel(id model) {
+    if (model == nil) return;
+    if (QQHModelLogCount >= 60) return;
+    QQHModelLogCount++;
+    QQHPLog(@"[model] %@", NSStringFromClass([model class]));
 }
 
 // ============================ 安装辅助 ============================
@@ -515,14 +585,33 @@ static void QQHInit(void) {
                 QQHSwizzle(conn, @selector(initWithRequest:delegate:),
                            (IMP)&hook_connInit, (IMP *)&orig_connInit);
             }
+
+            // 带 block 的变体：SDWebImage 实际用的是这些
+            if (sess != Nil) {
+                QQHSwizzle(sess, @selector(dataTaskWithURL:completionHandler:),
+                           (IMP)&hook_dataTaskWithURLHandler,
+                           (IMP *)&orig_dataTaskWithURLHandler);
+                QQHSwizzle(sess, @selector(dataTaskWithRequest:completionHandler:),
+                           (IMP)&hook_dataTaskWithReqHandler,
+                           (IMP *)&orig_dataTaskWithReqHandler);
+                QQHSwizzle(sess, @selector(downloadTaskWithURL:),
+                           (IMP)&hook_downloadTaskWithURL,
+                           (IMP *)&orig_downloadTaskWithURL);
+                QQHSwizzle(sess, @selector(downloadTaskWithURL:completionHandler:),
+                           (IMP)&hook_downloadTaskWithURLHandler,
+                           (IMP *)&orig_downloadTaskWithURLHandler);
+            }
         }
 
         // 5. 等级修改 / 余额修改
         {
             Class lv = NSClassFromString(@"QQLevelView");
-            if (lv != Nil)
+            if (lv != Nil) {
                 QQHSwizzle(lv, @selector(level),
                            (IMP)&hook_levelGetter, (IMP *)&orig_levelGetter);
+                QQHSwizzle(lv, @selector(setLevel:),
+                           (IMP)&hook_setLevel, (IMP *)&orig_setLevel);
+            }
 
             Class pay = NSClassFromString(@"PayTool");
             if (pay != Nil) {
@@ -534,6 +623,8 @@ static void QQHInit(void) {
                 QQHPLog(@"PayTool missing");
             }
         }
+
+        QQHDumpPrefs();
 
         QQHPLog(@"init done");
     }
