@@ -1,13 +1,16 @@
 // QQProbe - read-only probe
 //
-// Dumps the ObjC runtime of the QQ process so we can build the
-// "QQHelper feature -> QQ 6.2 class name" mapping.
+// Dumps the ObjC runtime of the QQ process so a "QQHelper feature -> QQ 6.2
+// class name" mapping can be built.
 //
 // Safety:
 //   * only calls objc_getClassList / class_copyMethodList (read only)
-//   * only writes /tmp/qqclasses.txt, /tmp/qqmethods.txt, /tmp/qqtargets.txt
-//   * never touches QQ's sandbox, data or preferences
+//   * writes only text dumps, into the app's own Documents directory and /tmp
+//   * never touches QQ's data, preferences or network
 //   * hooks nothing, changes no behaviour
+//
+// Note: iOS apps are sandboxed, so /tmp is usually NOT writable from inside the
+// app. NSHomeDirectory() points at the app's data container, which always is.
 
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
@@ -24,22 +27,43 @@ static NSArray *QQProbeKeys(void) {
     return k;
 }
 
+static NSArray *QQProbeWritableDirs(void) {
+    NSMutableArray *dirs = [NSMutableArray array];
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        [dirs addObject:[home stringByAppendingPathComponent:@"Documents"]];
+        [dirs addObject:home];
+        [dirs addObject:[home stringByAppendingPathComponent:@"Library"]];
+    }
+    [dirs addObject:@"/tmp"];
+    [dirs addObject:@"/var/mobile"];
+    return dirs;
+}
+
 static void QQProbeWrite(NSString *name, NSString *text) {
-    NSString *path = [@"/tmp" stringByAppendingPathComponent:name];
-    NSError *err = nil;
-    BOOL ok = [text writeToFile:path atomically:YES
-                       encoding:NSUTF8StringEncoding error:&err];
-    NSLog(@"[QQProbe] write %@ %@ (%lu chars)",
-          name, ok ? @"OK" : @"FAIL", (unsigned long)[text length]);
+    NSFileManager *fm = [NSFileManager defaultManager];
+    NSUInteger wrote = 0;
+    for (NSString *dir in QQProbeWritableDirs()) {
+        [fm createDirectoryAtPath:dir withIntermediateDirectories:YES
+                        attributes:nil error:NULL];
+        NSString *path = [dir stringByAppendingPathComponent:name];
+        BOOL ok = [text writeToFile:path atomically:YES
+                           encoding:NSUTF8StringEncoding error:NULL];
+        if (ok) {
+            wrote++;
+            NSLog(@"[QQProbe] wrote %@", path);
+        }
+    }
+    NSLog(@"[QQProbe] %@: wrote to %lu location(s), %lu chars",
+          name, (unsigned long)wrote, (unsigned long)[text length]);
 }
 
 static void QQProbeDump(void) {
     @autoreleasepool {
+        NSLog(@"[QQProbe] dump starting");
         int count = objc_getClassList(NULL, 0);
-        if (count <= 0) {
-            NSLog(@"[QQProbe] objc_getClassList returned %d", count);
-            return;
-        }
+        NSLog(@"[QQProbe] class count = %d", count);
+        if (count <= 0) return;
 
         Class *classes = (Class *)malloc(sizeof(Class) * (size_t)count);
         if (classes == NULL) return;
@@ -116,11 +140,12 @@ static void QQProbeDump(void) {
                               (c != Nil) ? @"EXISTS" : @"-"];
         }
         QQProbeWrite(@"qqtargets.txt", chk);
+        NSLog(@"[QQProbe] dump finished");
     }
 }
 
 static void QQProbeSchedule(void) {
-    NSArray *delays = @[@10, @25, @45];
+    NSArray *delays = @[@5, @15, @30, @50];
     for (NSNumber *d in delays) {
         dispatch_after(
             dispatch_time(DISPATCH_TIME_NOW, (int64_t)([d doubleValue] * NSEC_PER_SEC)),
@@ -130,11 +155,12 @@ static void QQProbeSchedule(void) {
     }
 }
 
-// Plain clang has no Logos, so %ctor becomes a real constructor function.
+// Plain clang has no Logos, so this is a real constructor function.
 __attribute__((constructor))
 static void QQProbeInit(void) {
     @autoreleasepool {
-        NSLog(@"[QQProbe] LOADED into %@", [[NSBundle mainBundle] bundleIdentifier]);
+        NSLog(@"[QQProbe] LOADED into %@ (home=%@)",
+              [[NSBundle mainBundle] bundleIdentifier], NSHomeDirectory());
         QQProbeSchedule();
     }
 }
