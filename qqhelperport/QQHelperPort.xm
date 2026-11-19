@@ -1,24 +1,38 @@
-// QQHelperPort - QQHelper 功能移植到 QQ 6.2
+// QQHelperPort - QQHelper ?蝘餅???QQ 6.2
 //
-// 依据：在 iPhone 5c / iOS 10.3.4 上对运行中的 QQ 6.2 做过 ObjC runtime dump
-// （24242 个类，3606 个类的方法清单），据此确认了可用的类与方法。
-//
-// 每个功能都有独立开关：
-//   /tmp/qqhp-off          关掉全部
-//   /tmp/qqhp-no-recall    关掉「撤回选项」
-//   /tmp/qqhp-no-antirevoke  关掉「防撤回」
-//   /tmp/qqhp-no-pendant   关掉「屏蔽头像挂件」
-//   /tmp/qqhp-no-font      关掉「屏蔽个性字体」
-//   /tmp/qqhp-no-weather   关掉「去除天气」
-//   /tmp/qqhp-no-time      关掉「屏蔽对话时间」
-//
-// 注意：QQ 6.2 的 QQRecallMenuFilter 有 11 个 `+is...NeedShowMenuRecall:`
-// 类方法决定长按菜单里是否出现「撤回」。全部改成返回 YES 即可让选项重新出现。
-
+// 靘嚗 iPhone 5c / iOS 10.3.4 銝笆餈?銝剔? QQ 6.2 ?? ObjC runtime dump
+// 嚗?4242 銝芰掩嚗?606 銝芰掩?瘜???嚗甇斤＆霈支??舐?掩銝瘜?//
+// 瘥葵??賣??祉?撘?喉?
+//   /tmp/qqhp-off          ?單??券
+//   /tmp/qqhp-no-recall    ?單???★??//   /tmp/qqhp-no-antirevoke  ?單???文???//   /tmp/qqhp-no-pendant   ?單????賢仍??隞嗚?//   /tmp/qqhp-no-font      ?單????賭葵?批?雿?//   /tmp/qqhp-no-weather   ?單???文予瘞?//   /tmp/qqhp-no-time      ?單????賢笆霂?氬?//
+// 瘜冽?嚗Q 6.2 ??QQRecallMenuFilter ??11 銝?`+is...NeedShowMenuRecall:`
+// 蝐餅瘜摰?????臬?箇???冽????YES ?喳霈拚★??箇??
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <UIKit/UIKit.h>
 #import <substrate.h>
+
+// iOS 10 logs through ASL and has no /var/log/syslog, so mirror every message
+// into a plain file that can be read over SSH.
+static void QQHPLog(NSString *fmt, ...) {
+    va_list ap;
+    va_start(ap, fmt);
+    NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
+    va_end(ap);
+    NSLog(@"[QQHP] %@", s);
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:@"/tmp/qqhp.log"];
+    if (fh == nil) {
+        [[NSFileManager defaultManager] createFileAtPath:@"/tmp/qqhp.log"
+                                                contents:nil attributes:nil];
+        fh = [NSFileHandle fileHandleForWritingAtPath:@"/tmp/qqhp.log"];
+    }
+    if (fh) {
+        [fh seekToEndOfFile];
+        [fh writeData:[[NSString stringWithFormat:@"[QQHP] %@\n", s]
+                       dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh closeFile];
+    }
+}
 
 static BOOL QQHPEnabled(void) {
     return ![[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/qqhp-off"];
@@ -31,9 +45,8 @@ static BOOL QQHPOn(NSString *switchName) {
 }
 
 // =====================================================================
-// 1. 撤回选项：QQRecallMenuFilter 的 11 个类方法全部返回 YES
-//    这样长按消息时「撤回」会重新出现在菜单里。
-// =====================================================================
+// 1. ?文??★嚗QRecallMenuFilter ??11 銝芰掩?寞??券餈? YES
+//    餈?踵?瘨?嗚????箇?刻?????// =====================================================================
 static BOOL (*orig_isText)(Class, SEL, id);
 static BOOL hook_isText(Class self, SEL _cmd, id msg) {
     if (QQHPOn(@"qqhp-no-recall")) return orig_isText ? orig_isText(self, _cmd, msg) : NO;
@@ -83,7 +96,7 @@ static BOOL hook_isShortVideo(Class self, SEL _cmd, id msg) {
 }
 
 // =====================================================================
-// 2. 防撤回：拦下三个收包回调，直接不入库（消息就不会被撤回）
+// 2. ?脫???虫?銝葵?嗅???嚗?乩??亙?嚗??臬停銝?鋡急??
 //    QQMessageRecallModule:
 //      -recvC2CRecallNotify:bufferLen:subcmd:isOnline:
 //      -recvGroupRecallNotify:bufferLen:isOnline:
@@ -94,7 +107,7 @@ static void hook_recvC2C(id self, SEL _cmd, id buf, unsigned int len, int subcmd
     if (QQHPOn(@"qqhp-no-antirevoke")) {
         if (orig_recvC2C) orig_recvC2C(self, _cmd, buf, len, subcmd, online);
     }
-    // 否则直接吞掉，消息不会被撤回
+    // ?血??湔??嚗??臭?隡◤?文?
 }
 
 static void (*orig_recvGroup)(id, SEL, id, unsigned int, BOOL);
@@ -112,7 +125,7 @@ static void hook_recvDiscuss(id self, SEL _cmd, id buf, unsigned int len, BOOL o
 }
 
 // =====================================================================
-// 3. 屏蔽头像挂件：QQAvatarView
+// 3. 撅憭游??辣嚗QAvatarView
 //    -frameForAvatarPendant  -> CGRectZero
 //    -avatarPendantID        -> nil
 // =====================================================================
@@ -133,15 +146,11 @@ static id hook_pendantID(id self, SEL _cmd) {
 }
 
 // =====================================================================
-// 4. 屏蔽性格/大小字体：QQAIOFontManager —— 让它返回系统字体
-//    我们不确知其方法签名，所以只在能取到 UIFont 返回值的常见入口上做保护。
-//    这里用「记录型」hook：不改行为，只打日志，等确认后再改。
-//    （保持安全：不确定的东西不动）
-// =====================================================================
+// 4. 撅?扳/憭批?摮?嚗QAIOFontManager ??霈拙?餈?蝟餌?摮?
+//    ?賑銝＆?亙?寞?蝑曉?嚗?隞亙?刻? UIFont 餈??潛?撣貉??亙銝?靽??//    餈??具扇敶??ook嚗??寡?銝綽??芣??亙?嚗?蝖株恕???嫘?//    嚗????剁?銝＆摰?銝正銝嚗?// =====================================================================
 
 // =====================================================================
-// 5. 去除天气：QQWeatherView —— 让它不显示（hidden = YES）
-// =====================================================================
+// 5. ?駁憭拇?嚗QWeatherView ??霈拙?銝蝷綽?hidden = YES嚗?// =====================================================================
 static void (*orig_weatherLayout)(id, SEL);
 static void hook_weatherLayout(id self, SEL _cmd) {
     if (orig_weatherLayout) orig_weatherLayout(self, _cmd);
@@ -152,7 +161,7 @@ static void hook_weatherLayout(id self, SEL _cmd) {
 }
 
 // =====================================================================
-// 6. 屏蔽对话窗口时间：QQAIOTimeCell —— 高度归零
+// 6. 撅撖寡?蝒?園嚗QAIOTimeCell ??擃漲敶
 // =====================================================================
 static void (*orig_timeLayout)(id, SEL);
 static void hook_timeLayout(id self, SEL _cmd) {
@@ -165,7 +174,7 @@ static void hook_timeLayout(id self, SEL _cmd) {
 }
 
 // =====================================================================
-// 安装
+// 摰?
 // =====================================================================
 static void QQHPSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     if (cls == Nil) return;
@@ -173,7 +182,7 @@ static void QQHPSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     if (m != NULL) {
         *oldImp = (IMP)method_getImplementation(m);
         method_setImplementation(m, newImp);
-        NSLog(@"[QQHP] hooked class method %@ %@", NSStringFromClass(cls),
+        QQHPLog(@"hooked class method %@ %@", NSStringFromClass(cls),
               NSStringFromSelector(sel));
         return;
     }
@@ -181,7 +190,7 @@ static void QQHPSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     if (m != NULL) {
         *oldImp = (IMP)method_getImplementation(m);
         method_setImplementation(m, newImp);
-        NSLog(@"[QQHP] hooked instance method %@ %@", NSStringFromClass(cls),
+        QQHPLog(@"hooked instance method %@ %@", NSStringFromClass(cls),
               NSStringFromSelector(sel));
     }
 }
@@ -189,15 +198,15 @@ static void QQHPSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
 __attribute__((constructor))
 static void QQHPInit(void) {
     @autoreleasepool {
-        NSLog(@"[QQHP] loaded into %@", [[NSBundle mainBundle] bundleIdentifier]);
+        QQHPLog(@"loaded into %@", [[NSBundle mainBundle] bundleIdentifier]);
         if (!QQHPEnabled()) {
-            NSLog(@"[QQHP] disabled by /tmp/qqhp-off");
+            QQHPLog(@"disabled by /tmp/qqhp-off");
             return;
         }
 
         Class filter = NSClassFromString(@"QQRecallMenuFilter");
         if (filter != Nil) {
-            // 把能确定的几个改成 YES
+            // ?蝖桀???銝芣??YES
             QQHPSwizzle(filter, @selector(isTextNeedShowMenuRecall:),
                         (IMP)&hook_isText, (IMP *)&orig_isText);
             QQHPSwizzle(filter, @selector(isGroupMessageNeedShowMenuRecall:),
@@ -214,9 +223,9 @@ static void QQHPInit(void) {
                         (IMP)&hook_isSM, (IMP *)&orig_isSM);
             QQHPSwizzle(filter, @selector(isQQRichShortVideoMessageNeedShowMenuRecall:),
                         (IMP)&hook_isShortVideo, (IMP *)&orig_isShortVideo);
-            NSLog(@"[QQHP] recall menu filter installed");
+            QQHPLog(@"recall menu filter installed");
         } else {
-            NSLog(@"[QQHP] QQRecallMenuFilter not found");
+            QQHPLog(@"QQRecallMenuFilter not found");
         }
 
         Class recall = NSClassFromString(@"QQMessageRecallModule");
@@ -227,7 +236,7 @@ static void QQHPInit(void) {
                         (IMP)&hook_recvGroup, (IMP *)&orig_recvGroup);
             QQHPSwizzle(recall, @selector(recvDiscussRecallNotify:bufferLen:isOnline:),
                         (IMP)&hook_recvDiscuss, (IMP *)&orig_recvDiscuss);
-            NSLog(@"[QQHP] anti-revoke installed");
+            QQHPLog(@"anti-revoke installed");
         }
 
         Class avatar = NSClassFromString(@"QQAvatarView");
@@ -236,7 +245,7 @@ static void QQHPInit(void) {
                         (IMP)&hook_pendantFrame, (IMP *)&orig_pendantFrame);
             QQHPSwizzle(avatar, @selector(avatarPendantID),
                         (IMP)&hook_pendantID, (IMP *)&orig_pendantID);
-            NSLog(@"[QQHP] pendant block installed");
+            QQHPLog(@"pendant block installed");
         }
 
         Class weather = NSClassFromString(@"QQWeatherView");
@@ -251,6 +260,6 @@ static void QQHPInit(void) {
                         (IMP)&hook_timeLayout, (IMP *)&orig_timeLayout);
         }
 
-        NSLog(@"[QQHP] init done");
+        QQHPLog(@"init done");
     }
 }
