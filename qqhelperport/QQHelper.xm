@@ -160,6 +160,9 @@ static CGFloat hook_detailAdHeight(Class self, SEL _cmd) {
     return orig_detailAdHeight ? orig_detailAdHeight(self, _cmd) : 0.0f;
 }
 
+// 前向声明（实现在下面的诊断段里）
+static void QQHNoteCell(id cell);
+
 // ==================== 3b. QQ空间信息流广告（真正的那个）====================
 // 广告 cell 的类名是 QzoneFeedCellGdtAdLR，它自己没有方法，全部继承
 // QzoneFeedCell（81 个方法）。所以 hook 基底类的 -layoutFeedView，
