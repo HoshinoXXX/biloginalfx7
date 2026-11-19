@@ -274,6 +274,36 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
 }
 
+// ---- 决定性实验：自己拿同一个 URL 下一次，看服务端到底回什么 ----
+static void QQHProbeImageURL(NSString *s) {
+    static BOOL done = NO;
+    if (done || [s length] == 0) return;
+    if ([s rangeOfString:@"m.qpic.cn"].location == NSNotFound &&
+        [s rangeOfString:@"a1.qpic.cn"].location == NSNotFound) return;
+    done = YES;
+
+    QQHPLog(@"[probe] fetching %@", s);
+    NSURL *u = [NSURL URLWithString:s];
+    if (u == nil) { QQHPLog(@"[probe] NSURL nil"); return; }
+
+    NSURLSession *sess = [NSURLSession sharedSession];
+    NSURLSessionDataTask *t =
+        [sess dataTaskWithURL:u completionHandler:^(NSData *data,
+                                                    NSURLResponse *resp,
+                                                    NSError *err) {
+            NSHTTPURLResponse *h = (NSHTTPURLResponse *)resp;
+            if (err != nil) {
+                QQHPLog(@"[probe] ERROR %@ (%ld)", [err localizedDescription],
+                        (long)[err code]);
+            } else {
+                QQHPLog(@"[probe] status=%ld bytes=%lu type=%@",
+                        (long)[h statusCode], (unsigned long)[data length],
+                        [h allHeaderFields][@"Content-Type"]);
+            }
+        }];
+    [t resume];
+}
+
 // ============ 10c. NSURLConnection 的类方法入口 ============
 // SDWebImage 的老版本用 +connectionWithRequest:delegate: 发请求，
 // 之前只 hook 了实例方法，所以这条路径一直没被看到。
@@ -295,6 +325,7 @@ static id (*orig_connInitStart)(id, SEL, id, id, BOOL);
 static id hook_connInitStart(id self, SEL _cmd, id req, id delegate, BOOL startNow) {
     NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
     QQHNoteImageURL([u absoluteString], "conn.init+start");
+    if (QQHOn(@"qzpic", YES)) QQHProbeImageURL([u absoluteString]);
     return orig_connInitStart ? orig_connInitStart(self, _cmd, req, delegate, startNow) : nil;
 }
 
