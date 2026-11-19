@@ -1,4 +1,4 @@
-// QQHelperPortPrefs - Settings panel for QQHelperPort
+﻿// QQHelperPortPrefs - Settings panel for QQHelperPort
 //
 // Theos's vendored Preferences headers (PSTableCell.h / PSSpecifier.h) do not
 // parse with current clang - they fail with "expected ':'" and the whole
@@ -26,7 +26,7 @@
 
 - (NSArray *)specifiers {
     if (_specifiers == nil) {
-        _specifiers = [[self loadSpecifiersFromPlistName:@"Root" target:self] retain];
+        _specifiers = [[self loadSpecifiersFromPlistName:@"Root" target:self];
     }
     return _specifiers;
 }
