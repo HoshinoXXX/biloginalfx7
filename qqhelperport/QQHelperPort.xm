@@ -53,10 +53,21 @@ static void QQHPLog(NSString *fmt, ...) {
     }
 }
 
-static BOOL QQHPOff(NSString *switchName) {
-    if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/qqhp-off"]) return YES;
-    return [[NSFileManager defaultManager]
-            fileExistsAtPath:[@"/tmp" stringByAppendingPathComponent:switchName]];
+// A feature is OFF when the global kill file exists, when the matching
+// /tmp/qqhp-no-<key> override exists, or when its switch is off in the
+// Settings panel. QQHPOff takes the Settings key (e.g. @"recall") and derives
+// the /tmp name from it, so both mechanisms stay usable.
+static BOOL QQHPOff(NSString *key) {
+    NSFileManager *fm = [NSFileManager defaultManager];
+    if ([fm fileExistsAtPath:@"/tmp/qqhp-off"]) return YES;
+    if (key != nil && [key length] > 0) {
+        NSString *tmpName = [@"qqhp-no-" stringByAppendingString:key];
+        if ([fm fileExistsAtPath:[@"/tmp" stringByAppendingPathComponent:tmpName]])
+            return YES;
+    }
+    id v = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+    if (v != nil) return ![v boolValue];
+    return NO;   // default on
 }
 
 // ===================== 1. 撤回按钮：两道门禁 =====================
@@ -66,7 +77,7 @@ static BOOL QQHPOff(NSString *switchName) {
 #define QQHP_BOOL_HOOK(NAME)                                                  \
     static BOOL (*orig_##NAME)(Class, SEL, id);                               \
     static BOOL hook_##NAME(Class self, SEL _cmd, id arg) {                   \
-        if (QQHPOff(@"qqhp-no-recall"))                                       \
+        if (QQHPOff(@"recall"))                                       \
             return orig_##NAME ? orig_##NAME(self, _cmd, arg) : NO;           \
         QQHPLog(@"[fired] #NAME -> YES");                                     \
         return YES;                                                           \
@@ -84,7 +95,7 @@ QQHP_BOOL_HOOK(isShortVideo)
 // 两分钟判定
 static BOOL (*orig_isInTowMinutes)(id, SEL, id);
 static BOOL hook_isInTowMinutes(id self, SEL _cmd, id msg) {
-    if (QQHPOff(@"qqhp-no-recall"))
+    if (QQHPOff(@"recall"))
         return orig_isInTowMinutes ? orig_isInTowMinutes(self, _cmd, msg) : NO;
     QQHPLog(@"[fired] isInTowMinutes -> YES");
     return YES;
@@ -93,7 +104,7 @@ static BOOL hook_isInTowMinutes(id self, SEL _cmd, id msg) {
 // ==================== 2. 防撤回 ====================
 static void (*orig_recvC2C)(id, SEL, void *, int, int, char);
 static void hook_recvC2C(id self, SEL _cmd, void *buf, int len, int subcmd, char online) {
-    if (QQHPOff(@"qqhp-no-antirevoke")) {
+    if (QQHPOff(@"antirevoke")) {
         if (orig_recvC2C) orig_recvC2C(self, _cmd, buf, len, subcmd, online);
     } else {
         QQHPLog(@"[fired] recvC2C swallowed");
@@ -102,7 +113,7 @@ static void hook_recvC2C(id self, SEL _cmd, void *buf, int len, int subcmd, char
 
 static void (*orig_recvGroup)(id, SEL, void *, unsigned int, char);
 static void hook_recvGroup(id self, SEL _cmd, void *buf, unsigned int len, char online) {
-    if (QQHPOff(@"qqhp-no-antirevoke")) {
+    if (QQHPOff(@"antirevoke")) {
         if (orig_recvGroup) orig_recvGroup(self, _cmd, buf, len, online);
     } else {
         QQHPLog(@"[fired] recvGroup swallowed");
@@ -111,7 +122,7 @@ static void hook_recvGroup(id self, SEL _cmd, void *buf, unsigned int len, char 
 
 static void (*orig_recvDiscuss)(id, SEL, void *, unsigned int, char);
 static void hook_recvDiscuss(id self, SEL _cmd, void *buf, unsigned int len, char online) {
-    if (QQHPOff(@"qqhp-no-antirevoke")) {
+    if (QQHPOff(@"antirevoke")) {
         if (orig_recvDiscuss) orig_recvDiscuss(self, _cmd, buf, len, online);
     } else {
         QQHPLog(@"[fired] recvDiscuss swallowed");
@@ -121,7 +132,7 @@ static void hook_recvDiscuss(id self, SEL _cmd, void *buf, unsigned int len, cha
 // ================== 3. 头像挂件 ==================
 static void (*orig_setShouldShowPendant)(id, SEL, BOOL);
 static void hook_setShouldShowPendant(id self, SEL _cmd, BOOL show) {
-    if (QQHPOff(@"qqhp-no-pendant")) {
+    if (QQHPOff(@"pendant")) {
         if (orig_setShouldShowPendant) orig_setShouldShowPendant(self, _cmd, show);
         return;
     }
@@ -130,14 +141,14 @@ static void hook_setShouldShowPendant(id self, SEL _cmd, BOOL show) {
 
 static id (*orig_pendantID)(id, SEL);
 static id hook_pendantID(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-pendant"))
+    if (QQHPOff(@"pendant"))
         return orig_pendantID ? orig_pendantID(self, _cmd) : nil;
     return nil;
 }
 
 static BOOL (*orig_shouldShowPendant)(id, SEL);
 static BOOL hook_shouldShowPendant(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-pendant"))
+    if (QQHPOff(@"pendant"))
         return orig_shouldShowPendant ? orig_shouldShowPendant(self, _cmd) : NO;
     return NO;
 }
@@ -149,25 +160,25 @@ static UIFont *QQHPSysFont(CGFloat size) {
 
 static UIFont *(*orig_aioTextFont)(id, SEL);
 static UIFont *hook_aioTextFont(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-font")) return orig_aioTextFont ? orig_aioTextFont(self, _cmd) : nil;
+    if (QQHPOff(@"font")) return orig_aioTextFont ? orig_aioTextFont(self, _cmd) : nil;
     return QQHPSysFont(16.0);
 }
 
 static UIFont *(*orig_aioNickFont)(id, SEL);
 static UIFont *hook_aioNickFont(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-font")) return orig_aioNickFont ? orig_aioNickFont(self, _cmd) : nil;
+    if (QQHPOff(@"font")) return orig_aioNickFont ? orig_aioNickFont(self, _cmd) : nil;
     return QQHPSysFont(13.0);
 }
 
 static UIFont *(*orig_aioTimeFont)(id, SEL);
 static UIFont *hook_aioTimeFont(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-font")) return orig_aioTimeFont ? orig_aioTimeFont(self, _cmd) : nil;
+    if (QQHPOff(@"font")) return orig_aioTimeFont ? orig_aioTimeFont(self, _cmd) : nil;
     return QQHPSysFont(11.0);
 }
 
 static UIFont *(*orig_aioVideoFont)(id, SEL);
 static UIFont *hook_aioVideoFont(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-font")) return orig_aioVideoFont ? orig_aioVideoFont(self, _cmd) : nil;
+    if (QQHPOff(@"font")) return orig_aioVideoFont ? orig_aioVideoFont(self, _cmd) : nil;
     return QQHPSysFont(13.0);
 }
 
@@ -175,7 +186,7 @@ static UIFont *hook_aioVideoFont(id self, SEL _cmd) {
 static id (*orig_weatherInit)(id, SEL);
 static id hook_weatherInit(id self, SEL _cmd) {
     id r = orig_weatherInit ? orig_weatherInit(self, _cmd) : nil;
-    if (!QQHPOff(@"qqhp-no-weather") && [r isKindOfClass:[UIView class]])
+    if (!QQHPOff(@"weather") && [r isKindOfClass:[UIView class]])
         [(UIView *)r setHidden:YES];
     return r;
 }
@@ -183,7 +194,7 @@ static id hook_weatherInit(id self, SEL _cmd) {
 // ============ 6. 礼物动画 ============
 static void (*orig_startAnimation)(id, SEL);
 static void hook_startAnimation(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-gift")) {
+    if (QQHPOff(@"gift")) {
         if (orig_startAnimation) orig_startAnimation(self, _cmd);
     }
 }
@@ -191,7 +202,7 @@ static void hook_startAnimation(id self, SEL _cmd) {
 // ============ 7. 表情联想 ============
 static void (*orig_loadFace)(id, SEL, id, BOOL, id);
 static void hook_loadFace(id self, SEL _cmd, id face, BOOL cloud, id keywords) {
-    if (QQHPOff(@"qqhp-no-faceassoc")) {
+    if (QQHPOff(@"faceassoc")) {
         if (orig_loadFace) orig_loadFace(self, _cmd, face, cloud, keywords);
     }
 }
@@ -199,7 +210,7 @@ static void hook_loadFace(id self, SEL _cmd, id face, BOOL cloud, id keywords) {
 // ============ 8. 推荐表情 ============
 static void (*orig_loadEmojiStoreFace)(id, SEL);
 static void hook_loadEmojiStoreFace(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-facestore")) {
+    if (QQHPOff(@"facestore")) {
         if (orig_loadEmojiStoreFace) orig_loadEmojiStoreFace(self, _cmd);
     }
 }
@@ -209,7 +220,7 @@ static void hook_loadEmojiStoreFace(id self, SEL _cmd) {
 //       并把 banner 的高度判定改成 0（CGFloat=float，寄存器回传，安全）。
 static id (*orig_adBannerInit)(id, SEL, CGRect, id);
 static id hook_adBannerInit(id self, SEL _cmd, CGRect frame, id unit) {
-    if (!QQHPOff(@"qqhp-no-qzonead")) {
+    if (!QQHPOff(@"qzonead")) {
         QQHPLog(@"[fired] blocked MQZoneAdBannerView init");
         return nil;
     }
@@ -218,7 +229,7 @@ static id hook_adBannerInit(id self, SEL _cmd, CGRect frame, id unit) {
 
 static id (*orig_bannerInit)(id, SEL, CGRect);
 static id hook_bannerInit(id self, SEL _cmd, CGRect frame) {
-    if (!QQHPOff(@"qqhp-no-qzonead")) {
+    if (!QQHPOff(@"qzonead")) {
         QQHPLog(@"[fired] blocked QZoneBannerAdView init");
         return nil;
     }
@@ -227,14 +238,14 @@ static id hook_bannerInit(id self, SEL _cmd, CGRect frame) {
 
 static void (*orig_updateBanner)(id, SEL);
 static void hook_updateBanner(id self, SEL _cmd) {
-    if (QQHPOff(@"qqhp-no-qzonead")) {
+    if (QQHPOff(@"qzonead")) {
         if (orig_updateBanner) orig_updateBanner(self, _cmd);
     }
 }
 
 static CGFloat (*orig_detailAdHeight)(Class, SEL);
 static CGFloat hook_detailAdHeight(Class self, SEL _cmd) {
-    if (!QQHPOff(@"qqhp-no-qzonead")) return 0.0f;
+    if (!QQHPOff(@"qzonead")) return 0.0f;
     return orig_detailAdHeight ? orig_detailAdHeight(self, _cmd) : 0.0f;
 }
 
