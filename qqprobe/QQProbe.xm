@@ -22,7 +22,14 @@ static NSArray *QQProbeKeys(void) {
         k = @[@"Recall", @"Revoke", @"Message", @"Msg", @"Bubble", @"Font",
               @"Pendant", @"Avatar", @"Weather", @"Splash", @"Gift", @"Face",
               @"Emoji", @"Time", @"Level", @"Pay", @"Menu", @"AIO", @"Ad",
-              @"Setting", @"Panel", @"Cell", @"Label"];
+              @"Setting", @"Panel", @"Cell", @"Label",
+              // second sweep: online status, card likes (365), red packets, group admin
+              @"Online", @"Presence", @"Status", @"Net", @"Wifi", @"WiFi",
+              @"Zan", @"Praise", @"CardInfo", @"Like",
+              @"RedPack", @"RedEnvelope", @"Hongbao", @"Lucky",
+              @"Admin", @"GroupMember", @"Owner", @"Member",
+              @"Drawer", @"Dynamic", @"TabBar", @"Device", @"Model",
+              @"Banner", @"Promo", @"QZone", @"Qzone", @"Feed"];
     }
     return k;
 }
