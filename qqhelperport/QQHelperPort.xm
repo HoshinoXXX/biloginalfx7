@@ -1,30 +1,40 @@
-// QQHelperPort - QQHelper ?蝘餅???QQ 6.2
+// QQHelperPort - QQHelper features ported to QQ 6.2
 //
-// 靘嚗 iPhone 5c / iOS 10.3.4 銝笆餈?銝剔? QQ 6.2 ?? ObjC runtime dump
-// 嚗?4242 銝芰掩嚗?606 銝芰掩?瘜???嚗甇斤＆霈支??舐?掩銝瘜?//
-// 瘥葵??賣??祉?撘?喉?
-//   /tmp/qqhp-off          ?單??券
-//   /tmp/qqhp-no-recall    ?單???★??//   /tmp/qqhp-no-antirevoke  ?單???文???//   /tmp/qqhp-no-pendant   ?單????賢仍??隞嗚?//   /tmp/qqhp-no-font      ?單????賭葵?批?雿?//   /tmp/qqhp-no-weather   ?單???文予瘞?//   /tmp/qqhp-no-time      ?單????賢笆霂?氬?//
-// 瘜冽?嚗Q 6.2 ??QQRecallMenuFilter ??11 銝?`+is...NeedShowMenuRecall:`
-// 蝐餅瘜摰?????臬?箇???冽????YES ?喳霈拚★??箇??
+// Based on an ObjC runtime dump taken from the running QQ 6.2 process on an
+// iPhone 5c / iOS 10.3.4 (24,242 classes, method lists for 3,606 classes).
+//
+// LESSON LEARNED (this crashed QQ once on 2026-11-19):
+//   On armv7 a 16-byte struct like CGRect is NOT returned in registers - the
+//   caller passes a hidden sret pointer as the first argument. Declaring
+//   `-frameForAvatarPendant` as `CGRect (id, SEL)` is therefore wrong and
+//   smashes the caller's stack; the symptom was EXC_BAD_ACCESS at 0x1e0.
+//   This build does not hook any struct-returning method, and logs
+//   method_getTypeEncoding for everything it does hook so signatures can be
+//   verified afterwards.
+//
+// Kill switches:
+//   /tmp/qqhp-off            disable everything
+//   /tmp/qqhp-no-recall      disable the recall menu fix
+//   /tmp/qqhp-no-antirevoke  disable anti-revoke
+//   /tmp/qqhp-no-weather     disable weather removal
+//   /tmp/qqhp-no-time        disable chat timestamp hiding
+
 #import <Foundation/Foundation.h>
 #import <objc/runtime.h>
 #import <UIKit/UIKit.h>
-#import <substrate.h>
 
-// iOS 10 logs through ASL and has no /var/log/syslog, so mirror every message
-// into a plain file that can be read over SSH.
+// iOS 10 logs through ASL and has no /var/log/syslog, so mirror into a file.
 static void QQHPLog(NSString *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
     NSLog(@"[QQHP] %@", s);
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:@"/tmp/qqhp.log"];
+    NSString *path = @"/tmp/qqhp.log";
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
     if (fh == nil) {
-        [[NSFileManager defaultManager] createFileAtPath:@"/tmp/qqhp.log"
-                                                contents:nil attributes:nil];
-        fh = [NSFileHandle fileHandleForWritingAtPath:@"/tmp/qqhp.log"];
+        [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
+        fh = [NSFileHandle fileHandleForWritingAtPath:path];
     }
     if (fh) {
         [fh seekToEndOfFile];
@@ -45,69 +55,34 @@ static BOOL QQHPOn(NSString *switchName) {
 }
 
 // =====================================================================
-// 1. ?文??★嚗QRecallMenuFilter ??11 銝芰掩?寞??券餈? YES
-//    餈?踵?瘨?嗚????箇?刻?????// =====================================================================
-static BOOL (*orig_isText)(Class, SEL, id);
-static BOOL hook_isText(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isText ? orig_isText(self, _cmd, msg) : NO;
-    return YES;
-}
+// 1. Recall menu: QQRecallMenuFilter's eight BOOL class methods -> always YES
+//    Signature is (Class, SEL, id) -> BOOL, matching the originals.
+// =====================================================================
+#define QQHP_BOOL_HOOK(NAME)                                                  \
+    static BOOL (*orig_##NAME)(Class, SEL, id);                               \
+    static BOOL hook_##NAME(Class self, SEL _cmd, id arg) {                   \
+        if (!QQHPOn(@"qqhp-no-recall")) return YES;                           \
+        return orig_##NAME ? orig_##NAME(self, _cmd, arg) : NO;               \
+    }
 
-static BOOL (*orig_isGroup)(Class, SEL, id);
-static BOOL hook_isGroup(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isGroup ? orig_isGroup(self, _cmd, msg) : NO;
-    return YES;
-}
-
-static BOOL (*orig_isPic)(Class, SEL, id);
-static BOOL hook_isPic(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isPic ? orig_isPic(self, _cmd, msg) : NO;
-    return YES;
-}
-
-static BOOL (*orig_isPtt)(Class, SEL, id);
-static BOOL hook_isPtt(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isPtt ? orig_isPtt(self, _cmd, msg) : NO;
-    return YES;
-}
-
-static BOOL (*orig_isFile)(Class, SEL, id);
-static BOOL hook_isFile(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isFile ? orig_isFile(self, _cmd, msg) : NO;
-    return YES;
-}
-
-static BOOL (*orig_isMarketFace)(Class, SEL, id);
-static BOOL hook_isMarketFace(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isMarketFace ? orig_isMarketFace(self, _cmd, msg) : NO;
-    return YES;
-}
-
-static BOOL (*orig_isSM)(Class, SEL, id);
-static BOOL hook_isSM(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isSM ? orig_isSM(self, _cmd, msg) : NO;
-    return YES;
-}
-
-static BOOL (*orig_isShortVideo)(Class, SEL, id);
-static BOOL hook_isShortVideo(Class self, SEL _cmd, id msg) {
-    if (QQHPOn(@"qqhp-no-recall")) return orig_isShortVideo ? orig_isShortVideo(self, _cmd, msg) : NO;
-    return YES;
-}
+QQHP_BOOL_HOOK(isText)
+QQHP_BOOL_HOOK(isGroup)
+QQHP_BOOL_HOOK(isPic)
+QQHP_BOOL_HOOK(isPtt)
+QQHP_BOOL_HOOK(isFile)
+QQHP_BOOL_HOOK(isMarketFace)
+QQHP_BOOL_HOOK(isSM)
+QQHP_BOOL_HOOK(isShortVideo)
 
 // =====================================================================
-// 2. ?脫???虫?銝葵?嗅???嚗?乩??亙?嚗??臬停銝?鋡急??
-//    QQMessageRecallModule:
-//      -recvC2CRecallNotify:bufferLen:subcmd:isOnline:
-//      -recvGroupRecallNotify:bufferLen:isOnline:
-//      -recvDiscussRecallNotify:bufferLen:isOnline:
+// 2. Anti-revoke: swallow the three recall callbacks (both return void)
 // =====================================================================
 static void (*orig_recvC2C)(id, SEL, id, unsigned int, int, BOOL);
-static void hook_recvC2C(id self, SEL _cmd, id buf, unsigned int len, int subcmd, BOOL online) {
+static void hook_recvC2C(id self, SEL _cmd, id buf, unsigned int len,
+                         int subcmd, BOOL online) {
     if (QQHPOn(@"qqhp-no-antirevoke")) {
         if (orig_recvC2C) orig_recvC2C(self, _cmd, buf, len, subcmd, online);
     }
-    // ?血??湔??嚗??臭?隡◤?文?
 }
 
 static void (*orig_recvGroup)(id, SEL, id, unsigned int, BOOL);
@@ -125,80 +100,55 @@ static void hook_recvDiscuss(id self, SEL _cmd, id buf, unsigned int len, BOOL o
 }
 
 // =====================================================================
-// 3. 撅憭游??辣嚗QAvatarView
-//    -frameForAvatarPendant  -> CGRectZero
-//    -avatarPendantID        -> nil
+// 3. Weather removal / timestamp hiding: hook void layoutSubviews, then hide
 // =====================================================================
-static CGRect (*orig_pendantFrame)(id, SEL);
-static CGRect hook_pendantFrame(id self, SEL _cmd) {
-    if (QQHPOn(@"qqhp-no-pendant")) {
-        if (orig_pendantFrame) return orig_pendantFrame(self, _cmd);
-    }
-    return CGRectZero;
-}
-
-static id (*orig_pendantID)(id, SEL);
-static id hook_pendantID(id self, SEL _cmd) {
-    if (QQHPOn(@"qqhp-no-pendant")) {
-        if (orig_pendantID) return orig_pendantID(self, _cmd);
-    }
-    return nil;
-}
-
-// =====================================================================
-// 4. 撅?扳/憭批?摮?嚗QAIOFontManager ??霈拙?餈?蝟餌?摮?
-//    ?賑銝＆?亙?寞?蝑曉?嚗?隞亙?刻? UIFont 餈??潛?撣貉??亙銝?靽??//    餈??具扇敶??ook嚗??寡?銝綽??芣??亙?嚗?蝖株恕???嫘?//    嚗????剁?銝＆摰?銝正銝嚗?// =====================================================================
-
-// =====================================================================
-// 5. ?駁憭拇?嚗QWeatherView ??霈拙?銝蝷綽?hidden = YES嚗?// =====================================================================
 static void (*orig_weatherLayout)(id, SEL);
 static void hook_weatherLayout(id self, SEL _cmd) {
     if (orig_weatherLayout) orig_weatherLayout(self, _cmd);
-    if (QQHPOn(@"qqhp-no-weather")) return;
-    if ([self isKindOfClass:[UIView class]]) {
-        [(UIView *)self setHidden:YES];
+    if (!QQHPOn(@"qqhp-no-weather")) {
+        if ([self isKindOfClass:[UIView class]]) [(UIView *)self setHidden:YES];
     }
 }
 
-// =====================================================================
-// 6. 撅撖寡?蝒?園嚗QAIOTimeCell ??擃漲敶
-// =====================================================================
 static void (*orig_timeLayout)(id, SEL);
 static void hook_timeLayout(id self, SEL _cmd) {
     if (orig_timeLayout) orig_timeLayout(self, _cmd);
-    if (QQHPOn(@"qqhp-no-time")) return;
-    if ([self isKindOfClass:[UIView class]]) {
-        [(UIView *)self setHidden:YES];
-        [(UIView *)self setAlpha:0.0];
+    if (!QQHPOn(@"qqhp-no-time")) {
+        if ([self isKindOfClass:[UIView class]]) {
+            [(UIView *)self setHidden:YES];
+            [(UIView *)self setAlpha:0.0];
+        }
     }
 }
 
 // =====================================================================
-// 摰?
+// Install helper: logs the type encoding so signatures can be verified
 // =====================================================================
 static void QQHPSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
-    if (cls == Nil) return;
+    if (cls == Nil || sel == NULL) return;
+
     Method m = class_getClassMethod(cls, sel);
-    if (m != NULL) {
-        *oldImp = (IMP)method_getImplementation(m);
-        method_setImplementation(m, newImp);
-        QQHPLog(@"hooked class method %@ %@", NSStringFromClass(cls),
-              NSStringFromSelector(sel));
+    const char *scope = "class";
+    if (m == NULL) {
+        m = class_getInstanceMethod(cls, sel);
+        scope = "instance";
+    }
+    if (m == NULL) {
+        QQHPLog(@"NOT FOUND  %@ %@", NSStringFromClass(cls), NSStringFromSelector(sel));
         return;
     }
-    m = class_getInstanceMethod(cls, sel);
-    if (m != NULL) {
-        *oldImp = (IMP)method_getImplementation(m);
-        method_setImplementation(m, newImp);
-        QQHPLog(@"hooked instance method %@ %@", NSStringFromClass(cls),
-              NSStringFromSelector(sel));
-    }
+    const char *enc = method_getTypeEncoding(m);
+    QQHPLog(@"hook %-8s %@ %@  encoding=%s", scope, NSStringFromClass(cls),
+            NSStringFromSelector(sel), enc ? enc : "?");
+    *oldImp = (IMP)method_getImplementation(m);
+    method_setImplementation(m, newImp);
 }
 
 __attribute__((constructor))
 static void QQHPInit(void) {
     @autoreleasepool {
-        QQHPLog(@"loaded into %@", [[NSBundle mainBundle] bundleIdentifier]);
+        QQHPLog(@"loaded into %@ (home=%@)", [[NSBundle mainBundle] bundleIdentifier],
+                NSHomeDirectory());
         if (!QQHPEnabled()) {
             QQHPLog(@"disabled by /tmp/qqhp-off");
             return;
@@ -206,7 +156,6 @@ static void QQHPInit(void) {
 
         Class filter = NSClassFromString(@"QQRecallMenuFilter");
         if (filter != Nil) {
-            // ?蝖桀???銝芣??YES
             QQHPSwizzle(filter, @selector(isTextNeedShowMenuRecall:),
                         (IMP)&hook_isText, (IMP *)&orig_isText);
             QQHPSwizzle(filter, @selector(isGroupMessageNeedShowMenuRecall:),
@@ -223,7 +172,6 @@ static void QQHPInit(void) {
                         (IMP)&hook_isSM, (IMP *)&orig_isSM);
             QQHPSwizzle(filter, @selector(isQQRichShortVideoMessageNeedShowMenuRecall:),
                         (IMP)&hook_isShortVideo, (IMP *)&orig_isShortVideo);
-            QQHPLog(@"recall menu filter installed");
         } else {
             QQHPLog(@"QQRecallMenuFilter not found");
         }
@@ -236,16 +184,6 @@ static void QQHPInit(void) {
                         (IMP)&hook_recvGroup, (IMP *)&orig_recvGroup);
             QQHPSwizzle(recall, @selector(recvDiscussRecallNotify:bufferLen:isOnline:),
                         (IMP)&hook_recvDiscuss, (IMP *)&orig_recvDiscuss);
-            QQHPLog(@"anti-revoke installed");
-        }
-
-        Class avatar = NSClassFromString(@"QQAvatarView");
-        if (avatar != Nil) {
-            QQHPSwizzle(avatar, @selector(frameForAvatarPendant),
-                        (IMP)&hook_pendantFrame, (IMP *)&orig_pendantFrame);
-            QQHPSwizzle(avatar, @selector(avatarPendantID),
-                        (IMP)&hook_pendantID, (IMP *)&orig_pendantID);
-            QQHPLog(@"pendant block installed");
         }
 
         Class weather = NSClassFromString(@"QQWeatherView");
