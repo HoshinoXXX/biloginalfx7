@@ -200,6 +200,7 @@ static void hook_layoutFeedView(id self, SEL _cmd) {
 // setFeedModel: 时也标记一下，提前隐藏一遍（有些路径不走 layoutFeedView）
 static void (*orig_setFeedModel)(id, SEL, id);
 static void hook_setFeedModel(id self, SEL _cmd, id model) {
+    QQHNoteCell(self);
     if (orig_setFeedModel) orig_setFeedModel(self, _cmd, model);
     if (!QQHOn(@"qzonead", YES)) return;
     if (!QQHIsGdtAdCell(self)) return;
@@ -218,10 +219,12 @@ static BOOL QQHLooksLikeImageURL(NSString *s) {
     if ([s hasPrefix:@"https://"]) return NO;         // 已经是 https
     if (![s hasPrefix:@"http://"] && ![s hasPrefix:@"//"]) return NO;
 
+    // 只认真正的图片/静态资源域名。之前误写了裸 "qq.com"，结果把
+    // strategy.beacon.qq.com / jspatch.qq.com 这些埋点接口也改写了。
     static NSArray *hosts = nil;
     if (hosts == nil) {
-        hosts = @[@"qpic.cn", @"qlogo.cn", @"gtimg.cn", @"qq.com", @"qzone.qq.com",
-                  @"hdslb.com", @"bilibili.com", @"tencentcloudapi.com"];
+        hosts = @[@"qpic.cn", @"qlogo.cn", @"gtimg.cn", @"photo.store.qq.com",
+                  @"qzonestyle.gtimg.cn", @"qzs.qq.com"];
     }
     for (NSString *h in hosts) {
         if ([s rangeOfString:h].location != NSNotFound) return YES;
@@ -253,6 +256,76 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
         }
     }
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
+}
+
+// ============ 4b. 图片请求的统一入口覆盖 + 诊断日志 ============
+// QQ空间图片不走 +[NSURLRequest requestWithURL:]，实测日志里一条 qpic 都没有。
+// 这里把 NSURLSession / NSURLConnection / NSMutableURLRequest 的入口全部覆盖，
+// 一边改写 http->https，一边把所有图片类 URL 原样打进日志，
+// 方便确认到底请求的是哪个地址、卡在哪。
+static void QQHNoteImageURL(NSString *s, const char *via) {
+    if (s == nil) return;
+    if ([s rangeOfString:@"qpic"].location == NSNotFound &&
+        [s rangeOfString:@"qlogo"].location == NSNotFound &&
+        [s rangeOfString:@"gtimg"].location == NSNotFound &&
+        [s rangeOfString:@"photo.store"].location == NSNotFound) return;
+    QQHPLog(@"[img] via=%s url=%s", via, [s UTF8String]);
+}
+
+static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
+    if (url == nil) return url;
+    NSString *s = [url absoluteString];
+    QQHNoteImageURL(s, via);
+    if (!QQHOn(@"qzpic", YES)) return url;
+    if (!QQHLooksLikeImageURL(s)) return url;
+    NSString *fixed = QQHFixImageURLString(s);
+    if ([fixed isEqualToString:s]) return url;
+    NSURL *nu = [NSURL URLWithString:fixed];
+    if (nu == nil) return url;
+    QQHPLog(@"[img] rewritten -> %s", [fixed UTF8String]);
+    return nu;
+}
+
+static id (*orig_dataTaskWithURL)(id, SEL, NSURL *);
+static id hook_dataTaskWithURL(id self, SEL _cmd, NSURL *url) {
+    NSURL *u = QQHFixIfNeeded(url, "session.url");
+    return orig_dataTaskWithURL ? orig_dataTaskWithURL(self, _cmd, u) : nil;
+}
+
+static id (*orig_dataTaskWithRequest)(id, SEL, id);
+static id hook_dataTaskWithRequest(id self, SEL _cmd, id req) {
+    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
+    QQHNoteImageURL([u absoluteString], "session.req");
+    if (QQHOn(@"qzpic", YES) && u != nil &&
+        QQHLooksLikeImageURL([u absoluteString])) {
+        NSURL *nu = [NSURL URLWithString:QQHFixImageURLString([u absoluteString])];
+        if (nu != nil && [req isKindOfClass:[NSMutableURLRequest class]]) {
+            [(NSMutableURLRequest *)req setURL:nu];
+            QQHPLog(@"[img] req.URL rewritten -> %s", [[nu absoluteString] UTF8String]);
+        }
+    }
+    return orig_dataTaskWithRequest ? orig_dataTaskWithRequest(self, _cmd, req) : nil;
+}
+
+static id (*orig_mutableReqInit)(id, SEL, NSURL *);
+static id hook_mutableReqInit(id self, SEL _cmd, NSURL *url) {
+    NSURL *u = QQHFixIfNeeded(url, "mreq.init");
+    return orig_mutableReqInit ? orig_mutableReqInit(self, _cmd, u) : nil;
+}
+
+static id (*orig_connInit)(id, SEL, id, id);
+static id hook_connInit(id self, SEL _cmd, id req, id delegate) {
+    NSURL *u = [req respondsToSelector:@selector(URL)] ? [req URL] : nil;
+    QQHNoteImageURL([u absoluteString], "conn.init");
+    return orig_connInit ? orig_connInit(self, _cmd, req, delegate) : nil;
+}
+
+// ---------------- 广告 cell 诊断：打印动态列表里的真实类名 ----------------
+static int QQHCellLogCount = 0;
+static void QQHNoteCell(id cell) {
+    if (QQHCellLogCount >= 40) return;
+    QQHCellLogCount++;
+    QQHPLog(@"[cell] %@", NSStringFromClass([cell class]));
 }
 
 // ============================ 安装辅助 ============================
@@ -362,6 +435,27 @@ static void QQHInit(void) {
                         QQHPLog(@"NSURLRequest requestWithURL: not found");
                     }
                 }
+            }
+        }
+
+        // 4b. 图片请求的其它入口（QQ空间图片不走 requestWithURL:）
+        {
+            Class sess = NSClassFromString(@"NSURLSession");
+            if (sess != Nil) {
+                QQHSwizzle(sess, @selector(dataTaskWithURL:),
+                           (IMP)&hook_dataTaskWithURL, (IMP *)&orig_dataTaskWithURL);
+                QQHSwizzle(sess, @selector(dataTaskWithRequest:),
+                           (IMP)&hook_dataTaskWithRequest, (IMP *)&orig_dataTaskWithRequest);
+            }
+            Class mreq = NSClassFromString(@"NSMutableURLRequest");
+            if (mreq != Nil) {
+                QQHSwizzle(mreq, @selector(initWithURL:),
+                           (IMP)&hook_mutableReqInit, (IMP *)&orig_mutableReqInit);
+            }
+            Class conn = NSClassFromString(@"NSURLConnection");
+            if (conn != Nil) {
+                QQHSwizzle(conn, @selector(initWithRequest:delegate:),
+                           (IMP)&hook_connInit, (IMP *)&orig_connInit);
             }
         }
 
