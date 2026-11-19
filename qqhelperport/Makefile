@@ -1,8 +1,8 @@
 export ARCHS = armv7
-export TARGET = iphone:clang:9.3:7.0
+export TARGET = iphone:clang:9.3:5.0
 
 WARNFLAGS = -Wno-unknown-warning-option -Wno-deprecated-module-dot-map
-MINVER    = -miphoneos-version-min=7.0
+MINVER    = -miphoneos-version-min=5.0
 
 export ADDITIONAL_CFLAGS     = $(WARNFLAGS) $(MINVER)
 export ADDITIONAL_CCFLAGS    = $(WARNFLAGS) $(MINVER)
