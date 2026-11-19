@@ -962,12 +962,6 @@ static void QQHInit(void) {
                 if (meta != Nil) {
                     Method m = class_getClassMethod(nsurlreq,
                                                     @selector(requestWithURL:));
-                    if (m != NULL) {
-                        QQHPLog(@"hook class    NSURLRequest requestWithURL:  enc=%s",
-                                method_getTypeEncoding(m) ?: "?");
-                        orig_requestWithURL = (id (*)(Class, SEL, NSURL *))
-                            method_getImplementation(m);
-                        method_setImplementation(m, (IMP)&hook_requestWithURL);
                     } else {
                         QQHPLog(@"NSURLRequest requestWithURL: not found");
                     }
@@ -980,8 +974,6 @@ static void QQHInit(void) {
             // NSURLSession 相关 hook 已移除（会引入 CFNetwork 依赖，iOS 7 上无法注入）
             Class mreq = NSClassFromString(@"NSMutableURLRequest");
             if (mreq != Nil) {
-                QQHSwizzle(mreq, @selector(initWithURL:),
-                           (IMP)&hook_mutableReqInit, (IMP *)&orig_mutableReqInit);
             }
         // NSURLConnection 相关注册已移除（会引入 CFNetwork 依赖）
             if (conn != Nil) {
@@ -1149,12 +1141,6 @@ static void QQHInit(void) {
         {
         // NSURLConnection 相关注册已移除（会引入 CFNetwork 依赖）
             if (c != Nil) {
-                QQHSwizzle(c, @selector(connectionWithRequest:delegate:),
-                           (IMP)&hook_connClassMethod, (IMP *)&orig_connClassMethod);
-                QQHSwizzle(c, @selector(sendAsynchronousRequest:queue:completionHandler:),
-                           (IMP)&hook_connAsync, (IMP *)&orig_connAsync);
-                QQHSwizzle(c, @selector(initWithRequest:delegate:startImmediately:),
-                           (IMP)&hook_connInitStart, (IMP *)&orig_connInitStart);
             }
         }
 
