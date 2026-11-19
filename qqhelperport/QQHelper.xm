@@ -116,7 +116,7 @@ static BOOL hook_isInTowMinutes(id self, SEL _cmd, id msg) {
 // 对应原面板的 fch 开关。
 static void (*orig_recvC2C)(id, SEL, void *, int, int, char);
 static void hook_recvC2C(id self, SEL _cmd, void *buf, int len, int subcmd, char online) {
-    if (!QQHOn(@"fch", NO)) {
+    if (!QQHOn(@"fch", YES)) {
         if (orig_recvC2C) orig_recvC2C(self, _cmd, buf, len, subcmd, online);
     } else {
         QQHPLog(@"[fired] recvC2C swallowed");
@@ -125,7 +125,7 @@ static void hook_recvC2C(id self, SEL _cmd, void *buf, int len, int subcmd, char
 
 static void (*orig_recvGroup)(id, SEL, void *, unsigned int, char);
 static void hook_recvGroup(id self, SEL _cmd, void *buf, unsigned int len, char online) {
-    if (!QQHOn(@"fch", NO)) {
+    if (!QQHOn(@"fch", YES)) {
         if (orig_recvGroup) orig_recvGroup(self, _cmd, buf, len, online);
     } else {
         QQHPLog(@"[fired] recvGroup swallowed");
@@ -134,7 +134,7 @@ static void hook_recvGroup(id self, SEL _cmd, void *buf, unsigned int len, char 
 
 static void (*orig_recvDiscuss)(id, SEL, void *, unsigned int, char);
 static void hook_recvDiscuss(id self, SEL _cmd, void *buf, unsigned int len, char online) {
-    if (!QQHOn(@"fch", NO)) {
+    if (!QQHOn(@"fch", YES)) {
         if (orig_recvDiscuss) orig_recvDiscuss(self, _cmd, buf, len, online);
     } else {
         QQHPLog(@"[fired] recvDiscuss swallowed");
