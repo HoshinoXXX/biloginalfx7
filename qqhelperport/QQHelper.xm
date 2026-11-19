@@ -308,8 +308,12 @@ static void hook_setDetailText(id self, SEL _cmd) {
     if (![self isKindOfClass:[UIView class]]) return;
 
     NSString *mine = QQHOnlineText();
-    __block int replaced = 0;
-    void (^walk)(UIView *) = ^(UIView *v) {
+    int replaced = 0;
+    // 迭代遍历，避免递归 block 捕获自身（clang 会当成未初始化指针报错）
+    NSMutableArray *stack = [NSMutableArray arrayWithObject:self];
+    while ([stack count] > 0) {
+        UIView *v = (UIView *)[stack lastObject];
+        [stack removeLastObject];
         if ([v isKindOfClass:[UILabel class]]) {
             UILabel *l = (UILabel *)v;
             NSString *t = [l text];
@@ -320,9 +324,8 @@ static void hook_setDetailText(id self, SEL _cmd) {
                 }
             }
         }
-        for (UIView *sub in [v subviews]) walk(sub);
-    };
-    walk((UIView *)self);
+        [stack addObjectsFromArray:[v subviews]];
+    }
     if (replaced > 0) QQHPLog(@"[fired] online label -> %@", mine);
 }
 
