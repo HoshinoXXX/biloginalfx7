@@ -167,6 +167,11 @@ static CGFloat hook_detailAdHeight(Class self, SEL _cmd) {
 // 前向声明（实现在下面的诊断段里）
 static void QQHNoteCell(id cell);
 static void QQHNoteModel(id model);
+static void QQHNoteModelDetail(id model);
+static NSString *QQHStringPref(NSString *key);
+static NSString *QQHOnlineText(void);
+static NSURL *QQHRepairURL(NSURL *url);
+static NSURL *QQHFixIfNeeded(NSURL *url, const char *via);
 
 // ==================== 3b. QQ空间信息流广告（真正的那个）====================
 // 广告 cell 的类名是 QzoneFeedCellGdtAdLR，它自己没有方法，全部继承
