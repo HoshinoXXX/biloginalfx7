@@ -1,0 +1,22 @@
+name: macOS Runner Sweep
+
+on:
+  workflow_dispatch:
+
+jobs:
+  mac13:
+    runs-on: macos-13
+    steps:
+      - run: echo "macos-13 OK"; sw_vers
+  mac14:
+    runs-on: macos-14
+    steps:
+      - run: echo "macos-14 OK"; sw_vers
+  mac15:
+    runs-on: macos-15
+    steps:
+      - run: echo "macos-15 OK"; sw_vers
+  maclatest:
+    runs-on: macos-latest
+    steps:
+      - run: echo "macos-latest OK"; sw_vers
