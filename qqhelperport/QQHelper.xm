@@ -275,7 +275,7 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
 static NSString *QQHMachineID(void) {
     size_t size = 0;
     if (sysctlbyname("hw.machine", NULL, &size, NULL, 0) != 0 || size == 0) return nil;
-    char *buf = malloc(size);
+    char *buf = (char *)malloc(size);
     if (buf == NULL) return nil;
     NSString *out = nil;
     if (sysctlbyname("hw.machine", buf, &size, NULL, 0) == 0) {
