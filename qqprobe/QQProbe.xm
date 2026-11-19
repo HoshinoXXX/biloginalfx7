@@ -19,17 +19,12 @@
 static NSArray *QQProbeKeys(void) {
     static NSArray *k = nil;
     if (k == nil) {
-        k = @[@"Recall", @"Revoke", @"Message", @"Msg", @"Bubble", @"Font",
-              @"Pendant", @"Avatar", @"Weather", @"Splash", @"Gift", @"Face",
-              @"Emoji", @"Time", @"Level", @"Pay", @"Menu", @"AIO", @"Ad",
-              @"Setting", @"Panel", @"Cell", @"Label",
-              // second sweep: online status, card likes (365), red packets, group admin
-              @"Online", @"Presence", @"Status", @"Net", @"Wifi", @"WiFi",
-              @"Zan", @"Praise", @"CardInfo", @"Like",
-              @"RedPack", @"RedEnvelope", @"Hongbao", @"Lucky",
-              @"Admin", @"GroupMember", @"Owner", @"Member",
-              @"Drawer", @"Dynamic", @"TabBar", @"Device", @"Model",
-              @"Banner", @"Promo", @"QZone", @"Qzone", @"Feed"];
+        k = @[@"Http", @"HTTP", @"Download", @"Transfer", @"Task", @"Pic", @"Photo",
+              @"Image", @"Img", @"Video", @"Media", @"Stream", @"Cache",
+              @"Socket", @"Connection", @"Request", @"Response", @"Url", @"URL",
+              @"Presence", @"Heartbeat", @"Online", @"Status", @"Device", @"Terminal",
+              @"Feed", @"Qzone", @"QZone", @"Ad", @"Adv", @"Gdt", @"Promo",
+              @"Recall", @"Zan", @"Red", @"Group", @"Admin", @"Member"];
     }
     return k;
 }
