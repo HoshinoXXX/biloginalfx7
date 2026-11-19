@@ -204,9 +204,9 @@ static void QQHNoteModel(id model);
 static void QQHNoteModelDetail(id model);
 static NSString *QQHStringPref(NSString *key);
 static NSString *QQHOnlineText(void);
-static NSURL *QQHRepairURL(NSURL *url);
-static NSURL *QQHFixIfNeeded(NSURL *url, const char *via);
-static void QQHNoteImageURL(NSString *s, const char *via);
+__attribute__((unused)) static NSURL *QQHRepairURL(NSURL *url);
+__attribute__((unused)) static NSURL *QQHFixIfNeeded(NSURL *url, const char *via);
+__attribute__((unused)) static void QQHNoteImageURL(NSString *s, const char *via);
 
 // ==================== 3b. QQ空间信息流广告（真正的那个）====================
 // 广告 cell 的类名是 QzoneFeedCellGdtAdLR，它自己没有方法，全部继承
@@ -290,7 +290,7 @@ static NSString *QQHFixImageURLString(NSString *s) {
     return s;
 }
 
-static id (*orig_requestWithURL)(Class, SEL, NSURL *);
+__attribute__((unused)) static id (*orig_requestWithURL)(Class, SEL, NSURL *);
 // QQHProbeImageURL 已移除：它引用了 NSURLSession，导致整个 dylib
 // 多出 CFNetwork 依赖，在 iOS 7 上绑定失败而无法注入。
 
@@ -300,7 +300,7 @@ static id (*orig_requestWithURL)(Class, SEL, NSURL *);
 // 把 t 改成 0 就回 image/jpeg（143335 字节）。iOS 10 的 UIImage 和
 // QQ 6.2 自带的 SDWebImage 都不支持 WebP，所以图片下载成功后解码失败，
 // 进度条永远停在 0%。改一个字符即可根治。
-static NSString *QQHForceJPEG(NSString *s) {
+__attribute__((unused)) static NSString *QQHForceJPEG(NSString *s) {
     if ([s length] == 0) return s;
     if ([s rangeOfString:@"qpic.cn"].location == NSNotFound &&
         [s rangeOfString:@"gtimg.cn"].location == NSNotFound) return s;
@@ -318,8 +318,8 @@ static NSString *QQHForceJPEG(NSString *s) {
 // ============ 10c. NSURLConnection 的类方法入口 ============
 // SDWebImage 的老版本用 +connectionWithRequest:delegate: 发请求，
 // 之前只 hook 了实例方法，所以这条路径一直没被看到。
-static id (*orig_connClassMethod)(Class, SEL, id, id);
-static void (*orig_connAsync)(Class, SEL, id, id, id);
+__attribute__((unused)) static id (*orig_connClassMethod)(Class, SEL, id, id);
+__attribute__((unused)) static void (*orig_connAsync)(Class, SEL, id, id, id);
 // ============ 10b. QQ空间图片下载器 MQZMutiplePicDownloader ============
 // 完整的类名是 MQZMutiplePicDownloader（MQZ = Mobile QZone）。
 // 图片既不走 NSURLSession 也不走 BDH，而是走它。
@@ -678,7 +678,7 @@ static BOOL QQHContainsAny(NSString *s, NSArray *needles) {
     return NO;
 }
 
-static NSURL *QQHRepairURL(NSURL *url) {
+__attribute__((unused)) static NSURL *QQHRepairURL(NSURL *url) {
     if (url == nil) return url;
     NSString *s = [url absoluteString];
 
@@ -777,7 +777,7 @@ static id hook_formatQd(Class self, SEL _cmd, int raw) {
 // 这里把 NSURLSession / NSURLConnection / NSMutableURLRequest 的入口全部覆盖，
 // 一边改写 http->https，一边把所有图片类 URL 原样打进日志，
 // 方便确认到底请求的是哪个地址、卡在哪。
-static void QQHNoteImageURL(NSString *s, const char *via) {
+__attribute__((unused)) static void QQHNoteImageURL(NSString *s, const char *via) {
     if (s == nil) return;
     if (!QQHDebugOn()) return;
     if ([s rangeOfString:@"qpic"].location == NSNotFound &&
@@ -787,9 +787,9 @@ static void QQHNoteImageURL(NSString *s, const char *via) {
     QQHPLog(@"[img] via=%s url=%s", via, [s UTF8String]);
 }
 
-static NSURL *QQHRepairURL(NSURL *url);   // 前向声明
+__attribute__((unused)) static NSURL *QQHRepairURL(NSURL *url);   // 前向声明
 
-static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
+__attribute__((unused)) static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
     if (url == nil) return url;
     NSString *s = [url absoluteString];
     QQHNoteImageURL(s, via);
@@ -812,14 +812,14 @@ static NSURL *QQHFixIfNeeded(NSURL *url, const char *via) {
     return nu;
 }
 
-static id (*orig_dataTaskWithURL)(id, SEL, NSURL *);
-static id (*orig_dataTaskWithRequest)(id, SEL, id);
-static id (*orig_mutableReqInit)(id, SEL, NSURL *);
+__attribute__((unused)) static id (*orig_dataTaskWithURL)(id, SEL, NSURL *);
+__attribute__((unused)) static id (*orig_dataTaskWithRequest)(id, SEL, id);
+__attribute__((unused)) static id (*orig_mutableReqInit)(id, SEL, NSURL *);
 // ---- NSURLSession 的带 block 变体（SDWebImage 实际走这些）----
-static id (*orig_dataTaskWithURLHandler)(id, SEL, NSURL *, id);
-static id (*orig_dataTaskWithReqHandler)(id, SEL, id, id);
-static id (*orig_downloadTaskWithURL)(id, SEL, NSURL *);
-static id (*orig_downloadTaskWithURLHandler)(id, SEL, NSURL *, id);
+__attribute__((unused)) static id (*orig_dataTaskWithURLHandler)(id, SEL, NSURL *, id);
+__attribute__((unused)) static id (*orig_dataTaskWithReqHandler)(id, SEL, id, id);
+__attribute__((unused)) static id (*orig_downloadTaskWithURL)(id, SEL, NSURL *);
+__attribute__((unused)) static id (*orig_downloadTaskWithURLHandler)(id, SEL, NSURL *, id);
 // ---- 等级：-setLevel: 才是真正会被调用的入口 ----
 static void (*orig_setLevel)(id, SEL, int);
 static void hook_setLevel(id self, SEL _cmd, int lv) {
