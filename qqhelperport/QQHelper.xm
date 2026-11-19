@@ -275,7 +275,7 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
 }
 
 // ---- 决定性实验：自己拿同一个 URL 下一次，看服务端到底回什么 ----
-static void QQHProbeImageURL(NSString *s) {
+__attribute__((unused)) static void QQHProbeImageURL(NSString *s) {
     static BOOL done = NO;
     if (done || [s length] == 0) return;
     if ([s rangeOfString:@"m.qpic.cn"].location == NSNotFound &&
