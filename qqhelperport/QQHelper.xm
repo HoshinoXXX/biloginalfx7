@@ -883,17 +883,6 @@ static void QQHSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     method_setImplementation(m, newImp);
 }
 
-// ============ 11. 去除转发限制 ============
-// MultiMsgForwardManager -isEnableMultiMsgForward 是「能否合并转发」的判定，纯 BOOL。
-static BOOL (*orig_isEnableMultiForward)(id, SEL);
-static BOOL hook_isEnableMultiForward(id self, SEL _cmd) {
-    if (QQHOn(@"fwdlimit", NO)) {
-        QQHPLog(@"[fired] multi-forward enabled");
-        return YES;
-    }
-    return orig_isEnableMultiForward ? orig_isEnableMultiForward(self, _cmd) : NO;
-}
-
 // ============ 12. 第二批：语音转文本 / 输入框提示 / 禁言精确到秒 ============
 
 // ---- 12.1 语音自动转文本：把灰度开关直接推成开启 ----
@@ -1154,18 +1143,6 @@ static void QQHInit(void) {
                 QQHSwizzle(shutup,
                            @selector(requestSetMemberShutup:memUin:shutupDuration:setOrCancel:),
                            (IMP)&hook_requestShutup, (IMP *)&orig_requestShutup);
-        }
-
-        // 11) 去除转发限制
-        {
-            Class fm = NSClassFromString(@"MultiMsgForwardManager");
-            if (fm != Nil) {
-                QQHSwizzle(fm, @selector(isEnableMultiMsgForward),
-                           (IMP)&hook_isEnableMultiForward,
-                           (IMP *)&orig_isEnableMultiForward);
-            } else {
-                QQHPLog(@"MultiMsgForwardManager missing");
-            }
         }
 
         QQHDumpPrefs();
