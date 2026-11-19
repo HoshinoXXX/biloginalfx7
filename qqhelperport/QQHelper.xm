@@ -261,6 +261,61 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
 }
 
+// ============ 5. QQ 等级修改 / 余额修改（仅本地显示）============
+// 原面板已有 Switchqqdjxg / djxg / Switchqqyexg / yexg 四个 key，直接接上。
+static NSString *QQHStringPref(NSString *key) {
+    id v = [[NSUserDefaults standardUserDefaults] objectForKey:key];
+    if (v == nil) {
+        NSDictionary *d = [[NSUserDefaults standardUserDefaults]
+                           persistentDomainForName:@"QQHelper"];
+        v = [d objectForKey:key];
+    }
+    if ([v isKindOfClass:[NSString class]]) return v;
+    if (v != nil) return [v description];
+    return nil;
+}
+
+// ---- 等级：QQLevelView -level ----
+static int (*orig_levelGetter)(id, SEL);
+static int hook_levelGetter(id self, SEL _cmd) {
+    if (QQHOn(@"Switchqqdjxg", NO)) {
+        NSString *s = QQHStringPref(@"djxg");
+        if ([s length] > 0) {
+            int v = [s intValue];
+            if (v > 0) {
+                QQHPLog(@"[fired] level -> %d", v);
+                return v;
+            }
+        }
+    }
+    return orig_levelGetter ? orig_levelGetter(self, _cmd) : 0;
+}
+
+// ---- 余额：PayTool +formatQbBalance: / +formatQdBalance: ----
+static id (*orig_formatQb)(Class, SEL, id);
+static id hook_formatQb(Class self, SEL _cmd, id raw) {
+    if (QQHOn(@"Switchqqyexg", NO)) {
+        NSString *s = QQHStringPref(@"yexg");
+        if ([s length] > 0) {
+            QQHPLog(@"[fired] qbBalance -> %@", s);
+            return s;
+        }
+    }
+    return orig_formatQb ? orig_formatQb(self, _cmd, raw) : raw;
+}
+
+static id (*orig_formatQd)(Class, SEL, id);
+static id hook_formatQd(Class self, SEL _cmd, id raw) {
+    if (QQHOn(@"Switchqqyexg", NO)) {
+        NSString *s = QQHStringPref(@"yexg");
+        if ([s length] > 0) {
+            QQHPLog(@"[fired] qdBalance -> %@", s);
+            return s;
+        }
+    }
+    return orig_formatQd ? orig_formatQd(self, _cmd, raw) : raw;
+}
+
 // ============ 4b. 图片请求的统一入口覆盖 + 诊断日志 ============
 // QQ空间图片不走 +[NSURLRequest requestWithURL:]，实测日志里一条 qpic 都没有。
 // 这里把 NSURLSession / NSURLConnection / NSMutableURLRequest 的入口全部覆盖，
@@ -459,6 +514,24 @@ static void QQHInit(void) {
             if (conn != Nil) {
                 QQHSwizzle(conn, @selector(initWithRequest:delegate:),
                            (IMP)&hook_connInit, (IMP *)&orig_connInit);
+            }
+        }
+
+        // 5. 等级修改 / 余额修改
+        {
+            Class lv = NSClassFromString(@"QQLevelView");
+            if (lv != Nil)
+                QQHSwizzle(lv, @selector(level),
+                           (IMP)&hook_levelGetter, (IMP *)&orig_levelGetter);
+
+            Class pay = NSClassFromString(@"PayTool");
+            if (pay != Nil) {
+                QQHSwizzle(pay, @selector(formatQbBalance:),
+                           (IMP)&hook_formatQb, (IMP *)&orig_formatQb);
+                QQHSwizzle(pay, @selector(formatQdBalance:),
+                           (IMP)&hook_formatQd, (IMP *)&orig_formatQd);
+            } else {
+                QQHPLog(@"PayTool missing");
             }
         }
 
