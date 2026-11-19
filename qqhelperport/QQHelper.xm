@@ -172,6 +172,7 @@ static NSString *QQHStringPref(NSString *key);
 static NSString *QQHOnlineText(void);
 static NSURL *QQHRepairURL(NSURL *url);
 static NSURL *QQHFixIfNeeded(NSURL *url, const char *via);
+static void QQHNoteImageURL(NSString *s, const char *via);
 
 // ==================== 3b. QQ空间信息流广告（真正的那个）====================
 // 广告 cell 的类名是 QzoneFeedCellGdtAdLR，它自己没有方法，全部继承
