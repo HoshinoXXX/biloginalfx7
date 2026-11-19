@@ -308,35 +308,9 @@ static id hook_requestWithURL(Class self, SEL _cmd, NSURL *url) {
     return orig_requestWithURL ? orig_requestWithURL(self, _cmd, url) : nil;
 }
 
-// ---- 决定性实验：自己拿同一个 URL 下一次，看服务端到底回什么 ----
-__attribute__((unused)) static void QQHProbeImageURL(NSString *s) {
-    static BOOL done = NO;
-    if (done || [s length] == 0) return;
-    if ([s rangeOfString:@"m.qpic.cn"].location == NSNotFound &&
-        [s rangeOfString:@"a1.qpic.cn"].location == NSNotFound) return;
-    done = YES;
+// QQHProbeImageURL 已移除：它引用了 NSURLSession，导致整个 dylib
+// 多出 CFNetwork 依赖，在 iOS 7 上绑定失败而无法注入。
 
-    QQHPLog(@"[probe] fetching %@", s);
-    NSURL *u = [NSURL URLWithString:s];
-    if (u == nil) { QQHPLog(@"[probe] NSURL nil"); return; }
-
-    NSURLSession *sess = [NSURLSession sharedSession];
-    NSURLSessionDataTask *t =
-        [sess dataTaskWithURL:u completionHandler:^(NSData *data,
-                                                    NSURLResponse *resp,
-                                                    NSError *err) {
-            NSHTTPURLResponse *h = (NSHTTPURLResponse *)resp;
-            if (err != nil) {
-                QQHPLog(@"[probe] ERROR %@ (%ld)", [err localizedDescription],
-                        (long)[err code]);
-            } else {
-                QQHPLog(@"[probe] status=%ld bytes=%lu type=%@",
-                        (long)[h statusCode], (unsigned long)[data length],
-                        [h allHeaderFields][@"Content-Type"]);
-            }
-        }];
-    [t resume];
-}
 
 // ============ 10d. 根治：强制 JPEG（去掉 WebP 转换）============
 // 实测证据：qpic 的 URL 带 &t=5 时 CDN 回 image/webp（94392 字节），
@@ -1109,13 +1083,7 @@ static void QQHInit(void) {
 
         // 4b. 图片请求的其它入口（QQ空间图片不走 requestWithURL:）
         {
-            Class sess = NSClassFromString(@"NSURLSession");
-            if (sess != Nil) {
-                QQHSwizzle(sess, @selector(dataTaskWithURL:),
-                           (IMP)&hook_dataTaskWithURL, (IMP *)&orig_dataTaskWithURL);
-                QQHSwizzle(sess, @selector(dataTaskWithRequest:),
-                           (IMP)&hook_dataTaskWithRequest, (IMP *)&orig_dataTaskWithRequest);
-            }
+            // NSURLSession 相关 hook 已移除（会引入 CFNetwork 依赖，iOS 7 上无法注入）
             Class mreq = NSClassFromString(@"NSMutableURLRequest");
             if (mreq != Nil) {
                 QQHSwizzle(mreq, @selector(initWithURL:),
