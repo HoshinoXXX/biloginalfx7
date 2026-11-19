@@ -283,10 +283,11 @@ static id hook_bdhInitHost(id self, SEL _cmd, id host) {
     return orig_bdhInitHost ? orig_bdhInitHost(self, _cmd, host) : nil;
 }
 
-static id (*orig_picFileId)(id, SEL);
-static id hook_picFileId(id self, SEL _cmd) {
-    id r = orig_picFileId ? orig_picFileId(self, _cmd) : nil;
-    QQHPLog(@"[bdh] pic fileId=%@", r);
+// 实测 enc = q8@0:4 —— fileId 是 long long，不是对象。
+static long long (*orig_picFileId)(id, SEL);
+static long long hook_picFileId(id self, SEL _cmd) {
+    long long r = orig_picFileId ? orig_picFileId(self, _cmd) : 0;
+    QQHPLog(@"[bdh] pic fileId=%lld", r);
     return r;
 }
 
@@ -296,9 +297,10 @@ static void hook_notifyHttpError(id self, SEL _cmd, id err) {
     if (orig_notifyHttpError) orig_notifyHttpError(self, _cmd, err);
 }
 
-static void (*orig_setHttpError)(id, SEL, int);
-static void hook_setHttpError(id self, SEL _cmd, int code) {
-    QQHPLog(@"[bdh] httpError code=%d", code);
+// 实测 enc = v12@0:4@8 —— 参数是对象。
+static void (*orig_setHttpError)(id, SEL, id);
+static void hook_setHttpError(id self, SEL _cmd, id code) {
+    QQHPLog(@"[bdh] httpError=%@", code);
     if (orig_setHttpError) orig_setHttpError(self, _cmd, code);
 }
 
