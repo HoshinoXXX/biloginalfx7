@@ -25,3 +25,15 @@ QQHelper_FRAMEWORKS = Foundation UIKit
 QQHelper_LDFLAGS    = -undefined dynamic_lookup
 
 include $(THEOS_MAKE_PATH)/tweak.mk
+
+# ------------------------------------------------- preference bundle
+BUNDLE_NAME = QQHelperPrefs
+QQHelperPrefs_FILES = QQHelperPrefs.m
+QQHelperPrefs_ARCHS = armv7
+QQHelperPrefs_INSTALL_PATH = /Library/PreferenceBundles
+QQHelperPrefs_CFLAGS = -fobjc-arc $(WARNFLAGS) $(MINVER)
+QQHelperPrefs_FRAMEWORKS = Foundation UIKit
+QQHelperPrefs_LDFLAGS = -undefined dynamic_lookup
+
+$(eval $(call ADDITIONAL_BUNDLE_RULES))
+include $(THEOS_MAKE_PATH)/bundle.mk
