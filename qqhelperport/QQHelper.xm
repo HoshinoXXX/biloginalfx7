@@ -160,6 +160,55 @@ static CGFloat hook_detailAdHeight(Class self, SEL _cmd) {
     return orig_detailAdHeight ? orig_detailAdHeight(self, _cmd) : 0.0f;
 }
 
+// ==================== 3b. QQ空间信息流广告（真正的那个）====================
+// 广告 cell 的类名是 QzoneFeedCellGdtAdLR，它自己没有方法，全部继承
+// QzoneFeedCell（81 个方法）。所以 hook 基底类的 -layoutFeedView，
+// 在里面判断具体类型，只对广告 cell 生效。
+// 用 -layoutFeedView（void）而不是 heightForRow，避免动表格结构。
+static BOOL QQHIsGdtAdCell(id cell) {
+    static Class adCls = Nil;
+    static BOOL resolved = NO;
+    if (!resolved) {
+        adCls = NSClassFromString(@"QzoneFeedCellGdtAdLR");
+        resolved = YES;
+    }
+    if (adCls == Nil || cell == nil) return NO;
+    return [cell isKindOfClass:adCls];
+}
+
+static void (*orig_layoutFeedView)(id, SEL);
+static void hook_layoutFeedView(id self, SEL _cmd) {
+    if (orig_layoutFeedView) orig_layoutFeedView(self, _cmd);
+    if (!QQHOn(@"qzonead", YES)) return;
+    if (!QQHIsGdtAdCell(self)) return;
+
+    QQHPLog(@"[fired] hide QzoneFeedCellGdtAdLR");
+    if ([self isKindOfClass:[UIView class]]) {
+        UIView *v = (UIView *)self;
+        [v setHidden:YES];
+        // 高度归零，尽量不留空白（表格高度仍由 delegate 决定，可能留一条缝）
+        CGRect f = [v frame];
+        f.size.height = 0.0f;
+        [v setFrame:f];
+        // 把所有子视图也藏掉，避免它自绘内容
+        for (UIView *sub in [v subviews]) {
+            [sub setHidden:YES];
+        }
+    }
+}
+
+// setFeedModel: 时也标记一下，提前隐藏一遍（有些路径不走 layoutFeedView）
+static void (*orig_setFeedModel)(id, SEL, id);
+static void hook_setFeedModel(id self, SEL _cmd, id model) {
+    if (orig_setFeedModel) orig_setFeedModel(self, _cmd, model);
+    if (!QQHOn(@"qzonead", YES)) return;
+    if (!QQHIsGdtAdCell(self)) return;
+    QQHPLog(@"[fired] ad cell setFeedModel");
+    if ([self isKindOfClass:[UIView class]]) {
+        [(UIView *)self setHidden:YES];
+    }
+}
+
 // ============================ 安装辅助 ============================
 static void QQHSwizzle(Class cls, SEL sel, IMP newImp, IMP *oldImp) {
     if (cls == Nil || sel == NULL) return;
@@ -236,6 +285,17 @@ static void QQHInit(void) {
             if (c != Nil)
                 QQHSwizzle(c, @selector(heightForCell),
                            (IMP)&hook_detailAdHeight, (IMP *)&orig_detailAdHeight);
+
+            // 真正的那个信息流广告：hook 基底类 QzoneFeedCell
+            c = NSClassFromString(@"QzoneFeedCell");
+            if (c != Nil) {
+                QQHSwizzle(c, @selector(layoutFeedView),
+                           (IMP)&hook_layoutFeedView, (IMP *)&orig_layoutFeedView);
+                QQHSwizzle(c, @selector(setFeedModel:),
+                           (IMP)&hook_setFeedModel, (IMP *)&orig_setFeedModel);
+            } else {
+                QQHPLog(@"QzoneFeedCell missing");
+            }
         }
 
         QQHPLog(@"init done");
