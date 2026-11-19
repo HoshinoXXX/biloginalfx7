@@ -1,0 +1,9 @@
+﻿Package: com.qqmin.test
+Name: QQMin Test
+Version: 0.1
+Architecture: iphoneos-arm
+Description: Minimal test tweak for diagnosing injection on iOS 7.
+Maintainer: test
+Author: test
+Section: Tweaks
+Depends: mobilesubstrate
