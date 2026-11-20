@@ -1028,19 +1028,20 @@ static int hook_getMaxPicNum(id self, SEL _cmd) {
 // 15.1b 聊天多选 / 选图的真实上限
 // 之前 hook 的 getMaxPicNum 不是选图上限，实测仍然只能选 20 张。
 // getMaxSelection 才是聊天里多选（含选图）返回上限的那个方法。
+// (QQHMaxSelectionPassthrough) 只记录原值，不再篡改。
+// 之前返回 100 很可能就是"点进聊天页就崩"的原因：
+// 这个值被拿去分配数组或做循环时，超出实际容量就会越界。
 static int (*orig_getMaxSelection)(id, SEL);
 static int hook_getMaxSelection(id self, SEL _cmd) {
-    if (QQHOn(@"piclimit", NO)) {
-        QQHPLog(@"[fired] getMaxSelection -> 100");
-        return 100;
-    }
-    return orig_getMaxSelection ? orig_getMaxSelection(self, _cmd) : 20;
+    int v = orig_getMaxSelection ? orig_getMaxSelection(self, _cmd) : 0;
+    QQHPLog(@"[sel] getMaxSelection = %d (passthrough)", v);
+    return v;
 }
 
-// onReachMaxSelection 是「到达上限」的回调，也一并拦掉，避免误报。
+// 回调必须照常调用，跳过会让 QQ 的上限状态不一致。
 static void (*orig_onReachMaxSelection)(id, SEL);
 static void hook_onReachMaxSelection(id self, SEL _cmd) {
-    if (QQHOn(@"piclimit", NO)) return;
+    QQHPLog(@"[sel] onReachMaxSelection called");
     if (orig_onReachMaxSelection) orig_onReachMaxSelection(self, _cmd);
 }
 
