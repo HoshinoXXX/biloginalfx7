@@ -979,6 +979,22 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
 
 
 
+// ---- 12.1b2 QQVoiceCell 专用一套 hook ----
+// 绝不能和 QQVoiceCellView 共用 orig 变量：第二次 swizzle 会覆盖它，
+// 导致 orig 指向另一个类的 hook，形成无限递归并闪退。
+static void (*orig_setModelVC)(id, SEL, id);
+static void hook_setModelVC(id self, SEL _cmd, id model) {
+    if (orig_setModelVC) orig_setModelVC(self, _cmd, model);
+    QQHPLog(@"[voice59] QQVoiceCell setAioModel model=%@",
+            model ? NSStringFromClass([model class]) : @"nil");
+}
+
+static void (*orig_reqVoiceVC)(id, SEL);
+static void hook_reqVoiceVC(id self, SEL _cmd) {
+    QQHPLog(@"[voice59] QQVoiceCell requestVoiceToText");
+    if (orig_reqVoiceVC) orig_reqVoiceVC(self, _cmd);
+}
+
 // ---- 12.1c 5.9 语音：(QQHSuppressVoiceHooks) 全部只记录不干预 ----
 // 5.9 走 DiscussGroupChatViewController：把"显示不支持遮罩"和"支持性判断"放开，
 // 用户点气泡上的按钮即可转文字。不强行自动发起，因为 -requestVoiceToText:withObject:
@@ -1028,6 +1044,21 @@ static int hook_getMaxPicNum(id self, SEL _cmd) {
 // 15.1b 聊天多选 / 选图的真实上限
 // 之前 hook 的 getMaxPicNum 不是选图上限，实测仍然只能选 20 张。
 // getMaxSelection 才是聊天里多选（含选图）返回上限的那个方法。
+// 群设置控制器专用一套 —— 与 QQChatSettingViewController 共用 orig
+// 会被第二次 swizzle 覆盖，进而无限递归。
+static int (*orig_getMaxSelGroup)(id, SEL);
+static int hook_getMaxSelGroup(id self, SEL _cmd) {
+    int v = orig_getMaxSelGroup ? orig_getMaxSelGroup(self, _cmd) : 0;
+    QQHPLog(@"[sel] group getMaxSelection = %d", v);
+    return v;
+}
+
+static void (*orig_onReachMaxSelGroup)(id, SEL);
+static void hook_onReachMaxSelGroup(id self, SEL _cmd) {
+    QQHPLog(@"[sel] group onReachMaxSelection");
+    if (orig_onReachMaxSelGroup) orig_onReachMaxSelGroup(self, _cmd);
+}
+
 // (QQHMaxSelectionPassthrough) 只记录原值，不再篡改。
 // 之前返回 100 很可能就是"点进聊天页就崩"的原因：
 // 这个值被拿去分配数组或做循环时，超出实际容量就会越界。
@@ -1262,14 +1293,21 @@ static void QQHInit(void) {
                 Class voiceCell = NSClassFromString(vn);
                 if (voiceCell == Nil) continue;
                 QQHPLog(@"[voice59] hooking class %@", vn);
-                QQHSwizzle(voiceCell, @selector(requestVoiceToText),
-                           (IMP)&hook_requestVoiceToText,
-                           (IMP *)&orig_requestVoiceToText);
-                QQHSwizzle(voiceCell, @selector(setAioModel:),
-                           (IMP)&hook_voiceCellSetModel,
-                           (IMP *)&orig_voiceCellSetModel);
-                // layoutSubviews 触发已撤除：它是最热的方法，
-                // 在里面做集合/字符串/延迟调度会让 5.9 抛未捕获异常崩溃。
+                // 每个类必须用各自独立的 orig 变量，否则第二次 swizzle
+                // 会覆盖前一个类的 orig，造成无限递归闪退。
+                if ([vn isEqualToString:@"QQVoiceCell"]) {
+                    QQHSwizzle(voiceCell, @selector(requestVoiceToText),
+                               (IMP)&hook_reqVoiceVC, (IMP *)&orig_reqVoiceVC);
+                    QQHSwizzle(voiceCell, @selector(setAioModel:),
+                               (IMP)&hook_setModelVC, (IMP *)&orig_setModelVC);
+                } else {
+                    QQHSwizzle(voiceCell, @selector(requestVoiceToText),
+                               (IMP)&hook_requestVoiceToText,
+                               (IMP *)&orig_requestVoiceToText);
+                    QQHSwizzle(voiceCell, @selector(setAioModel:),
+                               (IMP)&hook_voiceCellSetModel,
+                               (IMP *)&orig_voiceCellSetModel);
+                }
             }
 
         }
@@ -1292,11 +1330,12 @@ static void QQHInit(void) {
 
             Class grpSet = NSClassFromString(@"QQGroupSettingViewController");
             if (grpSet != Nil) {
+                // 必须用独立的 orig，不能和 chatSet 共用，否则递归闪退。
                 QQHSwizzle(grpSet, @selector(getMaxSelection),
-                           (IMP)&hook_getMaxSelection, (IMP *)&orig_getMaxSelection);
+                           (IMP)&hook_getMaxSelGroup, (IMP *)&orig_getMaxSelGroup);
                 QQHSwizzle(grpSet, @selector(onReachMaxSelection),
-                           (IMP)&hook_onReachMaxSelection,
-                           (IMP *)&orig_onReachMaxSelection);
+                           (IMP)&hook_onReachMaxSelGroup,
+                           (IMP *)&orig_onReachMaxSelGroup);
             }
 
             Class as = NSClassFromString(@"QQAppSetting");
