@@ -946,6 +946,22 @@ static char hook_requestShutup(id self, SEL _cmd, unsigned long long a,
     return 0;
 }
 
+// ============ 15. 去除发图限制 / 移除升级提示 ============
+
+// 15.1 发图数量上限：默认会限制一次能选几张，回个大数即可。
+static int (*orig_getMaxPicNum)(id, SEL);
+static int hook_getMaxPicNum(id self, SEL _cmd) {
+    if (QQHOn(@"piclimit", NO)) return 100;
+    return orig_getMaxPicNum ? orig_getMaxPicNum(self, _cmd) : 1;
+}
+
+// 15.2 升级提示：QQAppSetting 里判断该不该弹升级提示的方法。
+static BOOL (*orig_isUpgradeDisplay)(id, SEL, id);
+static BOOL hook_isUpgradeDisplay(id self, SEL _cmd, id uin) {
+    if (QQHOn(@"noupgrade", NO)) return NO;
+    return orig_isUpgradeDisplay ? orig_isUpgradeDisplay(self, _cmd, uin) : NO;
+}
+
 __attribute__((constructor))
 static void QQHInit(void) {
     @autoreleasepool {
@@ -1154,6 +1170,19 @@ static void QQHInit(void) {
                 QQHSwizzle(shutup,
                            @selector(requestSetMemberShutup:memUin:shutupDuration:setOrCancel:),
                            (IMP)&hook_requestShutup, (IMP *)&orig_requestShutup);
+        }
+
+        // 15) 发图限制 / 升级提示
+        {
+            Class fm = NSClassFromString(@"MultiMsgForwardManager");
+            if (fm != Nil)
+                QQHSwizzle(fm, @selector(getMaxPicNum),
+                           (IMP)&hook_getMaxPicNum, (IMP *)&orig_getMaxPicNum);
+
+            Class as = NSClassFromString(@"QQAppSetting");
+            if (as != Nil)
+                QQHSwizzle(as, @selector(isUpgradeDisplay:),
+                           (IMP)&hook_isUpgradeDisplay, (IMP *)&orig_isUpgradeDisplay);
         }
 
         QQHDumpPrefs();
