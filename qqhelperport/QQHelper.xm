@@ -994,6 +994,38 @@ static void QQHDumpClassMethods(NSString *clsName) {
     if (ms) free(ms);
 }
 
+// ---- 12.1b1 5.9 自动转文字的正确触发点 ----
+// QQVoiceCell 有 -requestVoiceToText（无参）和 -onPttDownloadFinish:。
+// 语音气泡加载完必然走 onPttDownloadFinish:，在那里触发转文字。
+static void (*orig_onPttFinish)(id, SEL, id);
+static void hook_onPttFinish(id self, SEL _cmd, id arg) {
+    if (orig_onPttFinish) orig_onPttFinish(self, _cmd, arg);
+    if (!QQHOn(@"voicetotext", NO)) return;
+
+    static NSMutableSet *done = nil;
+    if (done == nil) done = [[NSMutableSet alloc] init];
+    NSString *key = [NSString stringWithFormat:@"%p", self];
+    @synchronized(done) {
+        if ([done containsObject:key]) return;
+        [done addObject:key];
+        if ([done count] > 400) [done removeAllObjects];
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.5 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        @try {
+            if ([self respondsToSelector:@selector(requestVoiceToText)]) {
+                [(id)self performSelector:@selector(requestVoiceToText)];
+                QQHPLog(@"[voice59] auto transcribe via onPttDownloadFinish");
+            } else {
+                QQHPLog(@"[voice59] no requestVoiceToText on cell");
+            }
+        } @catch (NSException *e) {
+            QQHPLog(@"[voice59] exception: %@", e);
+        }
+    });
+}
+
 // ---- 12.1b2 QQVoiceCell 专用一套 hook ----
 // 绝不能和 QQVoiceCellView 共用 orig 变量：第二次 swizzle 会覆盖它，
 // 导致 orig 指向另一个类的 hook，形成无限递归并闪退。
@@ -1321,6 +1353,8 @@ static void QQHInit(void) {
                                (IMP)&hook_reqVoiceVC, (IMP *)&orig_reqVoiceVC);
                     QQHSwizzle(voiceCell, @selector(setAioModel:),
                                (IMP)&hook_setModelVC, (IMP *)&orig_setModelVC);
+                    QQHSwizzle(voiceCell, @selector(onPttDownloadFinish:),
+                               (IMP)&hook_onPttFinish, (IMP *)&orig_onPttFinish);
                 } else {
                     QQHSwizzle(voiceCell, @selector(requestVoiceToText),
                                (IMP)&hook_requestVoiceToText,
