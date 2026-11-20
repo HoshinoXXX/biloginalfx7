@@ -1069,16 +1069,57 @@ static void hook_reqVoiceVC(id self, SEL _cmd) {
 
 // ---- 12.1a9 全局扫描所有转文字相关的类 ----
 // 手动转已确认不走 QQVoiceCell / QQVoiceCellView，直接扫全类。
+// 每个 (类, SEL) 单独保存原 IMP，彻底避免多类共用 orig 造成的递归。
+static NSMutableDictionary *QQHVTTOrigMap = nil;
+
+static NSString *QQHVTTKey(Class c, SEL sel) {
+    return [NSString stringWithFormat:@"%s|%s", class_getName(c), sel_getName(sel)];
+}
+
+static IMP QQHVTTLookupOrig(id self, SEL _cmd) {
+    Class c = object_getClass(self);
+    while (c != Nil) {
+        NSString *k = QQHVTTKey(c, _cmd);
+        NSValue *v = [QQHVTTOrigMap objectForKey:k];
+        if (v != nil) return (IMP)[v pointerValue];
+        c = class_getSuperclass(c);
+    }
+    return NULL;
+}
+
+static void hook_vttAnimMap(id self, SEL _cmd, char animating) {
+    QQHPLog(@"[vtt] %@ refreshVoiceToTextAnimating=%d",
+            NSStringFromClass([self class]), (int)animating);
+    IMP imp = QQHVTTLookupOrig(self, _cmd);
+    if (imp) ((void (*)(id, SEL, char))imp)(self, _cmd, animating);
+}
+
+static void hook_vttTextMap(id self, SEL _cmd, id text) {
+    QQHPLog(@"[vtt] %@ voiceToText: %@", NSStringFromClass([self class]), text);
+    IMP imp = QQHVTTLookupOrig(self, _cmd);
+    if (imp) ((void (*)(id, SEL, id))imp)(self, _cmd, text);
+}
+
+static void hook_vttReqMap(id self, SEL _cmd) {
+    QQHPLog(@"[vtt] %@ requestVoiceToText", NSStringFromClass([self class]));
+    IMP imp = QQHVTTLookupOrig(self, _cmd);
+    if (imp) ((void (*)(id, SEL))imp)(self, _cmd);
+}
+
+// 只挂记录型 hook：不改行为、不吞异常，单纯记下谁被调用。
 static void QQHHookAllVTTClasses(void) {
+    if (QQHVTTOrigMap == nil) QQHVTTOrigMap = [[NSMutableDictionary alloc] init];
+
     int n = objc_getClassList(NULL, 0);
     if (n <= 0) return;
     Class *buf = (Class *)malloc(sizeof(Class) * n);
     if (buf == NULL) return;
     n = objc_getClassList(buf, n);
 
-    SEL selAnim = @selector(refreshVoiceToTextAnimating:);
-    SEL selText = @selector(voiceToText:);
-    SEL selReq = @selector(requestVoiceToText);
+    SEL sels[3] = { @selector(refreshVoiceToTextAnimating:),
+                    @selector(voiceToText:),
+                    @selector(requestVoiceToText) };
+    IMP hks[3] = { (IMP)&hook_vttAnimMap, (IMP)&hook_vttTextMap, (IMP)&hook_vttReqMap };
     int hits = 0;
 
     for (int i = 0; i < n; i++) {
@@ -1086,22 +1127,20 @@ static void QQHHookAllVTTClasses(void) {
         if (c == Nil) continue;
         const char *nm = class_getName(c);
         if (nm == NULL) continue;
-        // 只关心名字里带 Voice / Ptt 的，避免误挂无关类
         if (strstr(nm, "Voice") == NULL && strstr(nm, "Ptt") == NULL &&
             strstr(nm, "PTT") == NULL) continue;
 
         BOOL did = NO;
-        if (class_getInstanceMethod(c, selAnim) != NULL) {
-            QQHSwizzle(c, selAnim, (IMP)&hook_refreshVTT, (IMP *)&orig_refreshVTT);
-            did = YES;
-        }
-        if (class_getInstanceMethod(c, selText) != NULL) {
-            QQHSwizzle(c, selText, (IMP)&hook_voiceToTextResult,
-                       (IMP *)&orig_voiceToTextResult);
-            did = YES;
-        }
-        if (class_getInstanceMethod(c, selReq) != NULL) {
-            QQHSwizzle(c, selReq, (IMP)&hook_reqVoiceVC, (IMP *)&orig_reqVoiceVC);
+        for (int k = 0; k < 3; k++) {
+            Method m = class_getInstanceMethod(c, sels[k]);
+            if (m == NULL) continue;
+            // 关键：按 (类,SEL) 存原实现，不用共享变量
+            NSString *key = QQHVTTKey(c, sels[k]);
+            if ([QQHVTTOrigMap objectForKey:key] == nil) {
+                [QQHVTTOrigMap setObject:[NSValue valueWithPointer:method_getImplementation(m)]
+                                  forKey:key];
+            }
+            class_replaceMethod(c, sels[k], hks[k], method_getTypeEncoding(m));
             did = YES;
         }
         if (did) {
