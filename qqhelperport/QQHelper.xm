@@ -979,6 +979,21 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
 
 
 
+// ---- 诊断工具：列出某个类的全部实例方法 ----
+static void QQHDumpClassMethods(NSString *clsName) {
+    Class c = NSClassFromString(clsName);
+    if (c == Nil) { QQHPLog(@"[dump] %@ = Nil", clsName); return; }
+    unsigned int n = 0;
+    Method *ms = class_copyMethodList(c, &n);
+    QQHPLog(@"[dump] %@ has %u methods", clsName, n);
+    for (unsigned int i = 0; i < n; i++) {
+        SEL s = method_getName(ms[i]);
+        const char *t = method_getTypeEncoding(ms[i]);
+        QQHPLog(@"[dump] %@ -%s  %s", clsName, sel_getName(s), t ? t : "?");
+    }
+    if (ms) free(ms);
+}
+
 // ---- 12.1b2 QQVoiceCell 专用一套 hook ----
 // 绝不能和 QQVoiceCellView 共用 orig 变量：第二次 swizzle 会覆盖它，
 // 导致 orig 指向另一个类的 hook，形成无限递归并闪退。
@@ -1285,6 +1300,12 @@ static void QQHInit(void) {
                            (IMP)&hook_59ReqVoice, (IMP *)&orig_59ReqVoice);
                 QQHSwizzle(dis, @selector(checkVoiceToTextSupport),
                            (IMP)&hook_59CheckSupport, (IMP *)&orig_59CheckSupport);
+            }
+
+            // 只在开了 /tmp/qqhelper-debug 时输出方法列表
+            if (QQHDebugOn()) {
+                QQHDumpClassMethods(@"QQVoiceCell");
+                QQHDumpClassMethods(@"QQVoiceCellView");
             }
 
             // 5.9 的气泡可能叫 QQVoiceCell，6.2 叫 QQVoiceCellView，两个都挂。
