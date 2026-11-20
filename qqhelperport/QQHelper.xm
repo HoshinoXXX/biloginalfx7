@@ -973,6 +973,25 @@ static int hook_getMaxPicNum(id self, SEL _cmd) {
     return orig_getMaxPicNum ? orig_getMaxPicNum(self, _cmd) : 1;
 }
 
+// 15.1b 聊天多选 / 选图的真实上限
+// 之前 hook 的 getMaxPicNum 不是选图上限，实测仍然只能选 20 张。
+// getMaxSelection 才是聊天里多选（含选图）返回上限的那个方法。
+static int (*orig_getMaxSelection)(id, SEL);
+static int hook_getMaxSelection(id self, SEL _cmd) {
+    if (QQHOn(@"piclimit", NO)) {
+        QQHPLog(@"[fired] getMaxSelection -> 100");
+        return 100;
+    }
+    return orig_getMaxSelection ? orig_getMaxSelection(self, _cmd) : 20;
+}
+
+// onReachMaxSelection 是「到达上限」的回调，也一并拦掉，避免误报。
+static void (*orig_onReachMaxSelection)(id, SEL);
+static void hook_onReachMaxSelection(id self, SEL _cmd) {
+    if (QQHOn(@"piclimit", NO)) return;
+    if (orig_onReachMaxSelection) orig_onReachMaxSelection(self, _cmd);
+}
+
 // 15.2 升级提示：QQAppSetting 里判断该不该弹升级提示的方法。
 static BOOL (*orig_isUpgradeDisplay)(id, SEL, id);
 static BOOL hook_isUpgradeDisplay(id self, SEL _cmd, id uin) {
@@ -1200,6 +1219,24 @@ static void QQHInit(void) {
             if (fm != Nil)
                 QQHSwizzle(fm, @selector(getMaxPicNum),
                            (IMP)&hook_getMaxPicNum, (IMP *)&orig_getMaxPicNum);
+
+            Class chatSet = NSClassFromString(@"QQChatSettingViewController");
+            if (chatSet != Nil) {
+                QQHSwizzle(chatSet, @selector(getMaxSelection),
+                           (IMP)&hook_getMaxSelection, (IMP *)&orig_getMaxSelection);
+                QQHSwizzle(chatSet, @selector(onReachMaxSelection),
+                           (IMP)&hook_onReachMaxSelection,
+                           (IMP *)&orig_onReachMaxSelection);
+            }
+
+            Class grpSet = NSClassFromString(@"QQGroupSettingViewController");
+            if (grpSet != Nil) {
+                QQHSwizzle(grpSet, @selector(getMaxSelection),
+                           (IMP)&hook_getMaxSelection, (IMP *)&orig_getMaxSelection);
+                QQHSwizzle(grpSet, @selector(onReachMaxSelection),
+                           (IMP)&hook_onReachMaxSelection,
+                           (IMP *)&orig_onReachMaxSelection);
+            }
 
             Class as = NSClassFromString(@"QQAppSetting");
             if (as != Nil)
