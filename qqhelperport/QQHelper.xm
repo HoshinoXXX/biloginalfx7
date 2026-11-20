@@ -994,6 +994,29 @@ static void QQHDumpClassMethods(NSString *clsName) {
     if (ms) free(ms);
 }
 
+// ---- 12.1b0 转文字过程探针 ----
+// 手动转成功但 requestVoiceToText 无日志，说明走的是别的路径。
+// 动画刷新与结果回调是必经的，挂上就能定位。
+static void (*orig_refreshVTT_VC)(id, SEL, char);
+static void hook_refreshVTT_VC(id self, SEL _cmd, char animating) {
+    QQHPLog(@"[vtt] QQVoiceCell refreshVoiceToTextAnimating=%d", (int)animating);
+    if (orig_refreshVTT_VC) orig_refreshVTT_VC(self, _cmd, animating);
+}
+
+static void (*orig_refreshVTT)(id, SEL, char);
+static void hook_refreshVTT(id self, SEL _cmd, char animating) {
+    QQHPLog(@"[vtt] %@ refreshVoiceToTextAnimating=%d",
+            NSStringFromClass([self class]), (int)animating);
+    if (orig_refreshVTT) orig_refreshVTT(self, _cmd, animating);
+}
+
+static void (*orig_voiceToTextResult)(id, SEL, id);
+static void hook_voiceToTextResult(id self, SEL _cmd, id text) {
+    QQHPLog(@"[vtt] %@ voiceToText: %@",
+            NSStringFromClass([self class]), text);
+    if (orig_voiceToTextResult) orig_voiceToTextResult(self, _cmd, text);
+}
+
 // ---- 12.1b1 5.9 自动转文字的正确触发点 ----
 // QQVoiceCell 有 -requestVoiceToText（无参）和 -onPttDownloadFinish:。
 // 语音气泡加载完必然走 onPttDownloadFinish:，在那里触发转文字。
@@ -1348,6 +1371,17 @@ static void QQHInit(void) {
                 QQHPLog(@"[voice59] hooking class %@", vn);
                 // 每个类必须用各自独立的 orig 变量，否则第二次 swizzle
                 // 会覆盖前一个类的 orig，造成无限递归闪退。
+                // 转文字探针：两个类各自独立变量，避免共用 orig 递归
+                if ([vn isEqualToString:@"QQVoiceCell"]) {
+                    QQHSwizzle(voiceCell, @selector(refreshVoiceToTextAnimating:),
+                               (IMP)&hook_refreshVTT_VC, (IMP *)&orig_refreshVTT_VC);
+                } else {
+                    QQHSwizzle(voiceCell, @selector(refreshVoiceToTextAnimating:),
+                               (IMP)&hook_refreshVTT, (IMP *)&orig_refreshVTT);
+                    QQHSwizzle(voiceCell, @selector(voiceToText:),
+                               (IMP)&hook_voiceToTextResult,
+                               (IMP *)&orig_voiceToTextResult);
+                }
                 if ([vn isEqualToString:@"QQVoiceCell"]) {
                     QQHSwizzle(voiceCell, @selector(requestVoiceToText),
                                (IMP)&hook_reqVoiceVC, (IMP *)&orig_reqVoiceVC);
