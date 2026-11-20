@@ -30,48 +30,49 @@
 #include <net/if.h>
 
 // ------------------------------------------------------------------ 日志
+// 日志：先写内存缓冲，最后 flush 一次。
+// 为什么不每条都写文件：3GS(iOS 6) 上启动被看门狗杀掉（0x8badf00d,
+// failed to launch in time, CPU 6.4s），元凶就是构造阶段 45+ 次开关文件的 IO。
+static NSMutableString *QQHLogBuf = nil;
+
 static void QQHPLog(NSString *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
-    NSLog(@"[QQH] %@", s);
-    // iOS 7 的沙盒不允许 App 写 /tmp，所以按顺序找一个能写的路径并记住它。
-    static NSString *chosenPath = nil;
-    if (chosenPath == nil) {
-        NSMutableArray *cands = [NSMutableArray array];
-        [cands addObject:@"/tmp/qqhelper.log"];
-        NSString *home = NSHomeDirectory();
-        if (home) {
-            [cands addObject:[home stringByAppendingPathComponent:@"Documents/qqhelper.log"]];
-            [cands addObject:[home stringByAppendingPathComponent:@"Library/qqhelper.log"]];
-            [cands addObject:[home stringByAppendingPathComponent:@"qqhelper.log"]];
+    if (QQHLogBuf == nil) QQHLogBuf = [[NSMutableString alloc] init];
+    [QQHLogBuf appendFormat:@"[QQH] %@\n", s];
+}
+
+// 找可写路径（iOS 7 沙盒不让写 /tmp，回退到 App 容器）
+static NSString *QQHLogPath(void) {
+    static NSString *cached = nil;
+    if (cached != nil) return cached;
+    NSMutableArray *cands = [NSMutableArray array];
+    [cands addObject:@"/tmp/qqhelper.log"];
+    NSString *home = NSHomeDirectory();
+    if (home) {
+        [cands addObject:[home stringByAppendingPathComponent:@"Documents/qqhelper.log"]];
+        [cands addObject:[home stringByAppendingPathComponent:@"Library/qqhelper.log"]];
+        [cands addObject:[home stringByAppendingPathComponent:@"qqhelper.log"]];
+    }
+    NSFileManager *fm = [NSFileManager defaultManager];
+    for (NSString *c in cands) {
+        if ([fm createFileAtPath:c contents:nil attributes:nil] ||
+            [fm fileExistsAtPath:c]) {
+            cached = c;
+            break;
         }
-        NSFileManager *fm = [NSFileManager defaultManager];
-        for (NSString *c in cands) {
-            if ([fm createFileAtPath:c contents:nil attributes:nil]) {
-                chosenPath = c;
-                break;
-            }
-            if ([fm fileExistsAtPath:c]) {   // 已存在也能用
-                chosenPath = c;
-                break;
-            }
-        }
-        if (chosenPath == nil) chosenPath = @"/tmp/qqhelper.log";
     }
-    NSString *path = chosenPath;
-    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
-    if (fh == nil) {
-        [[NSFileManager defaultManager] createFileAtPath:path contents:nil attributes:nil];
-        fh = [NSFileHandle fileHandleForWritingAtPath:path];
-    }
-    if (fh) {
-        [fh seekToEndOfFile];
-        [fh writeData:[[NSString stringWithFormat:@"[QQH] %@\n", s]
-                       dataUsingEncoding:NSUTF8StringEncoding]];
-        [fh closeFile];
-    }
+    if (cached == nil) cached = @"/tmp/qqhelper.log";
+    return cached;
+}
+
+// 构造结束时调一次；如果进程很早就崩，日志可能来不及落盘，但那种情况本来也看不到。
+static void QQHFlushLog(void) {
+    if (QQHLogBuf == nil || [QQHLogBuf length] == 0) return;
+    [QQHLogBuf writeToFile:QQHLogPath() atomically:YES
+                          encoding:NSUTF8StringEncoding error:NULL];
 }
 
 // 读取原版 QQHelper 设置面板里的开关（默认值取自它的 plist）。
@@ -951,6 +952,7 @@ static void QQHInit(void) {
         QQHPLog(@"loaded into %@", [[NSBundle mainBundle] bundleIdentifier]);
         if ([[NSFileManager defaultManager] fileExistsAtPath:@"/tmp/qqhelper-off"]) {
             QQHPLog(@"globally disabled by /tmp/qqhelper-off");
+            QQHFlushLog();
             return;
         }
 
@@ -1157,5 +1159,6 @@ static void QQHInit(void) {
         QQHDumpPrefs();
 
         QQHPLog(@"init done");
+        QQHFlushLog();
     }
 }
