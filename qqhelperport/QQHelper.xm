@@ -942,15 +942,8 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
             }
         } @catch (NSException *e) { }
 
-        // 8 秒还没出结果就收掉转圈，避免一直转
-        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)),
-                       dispatch_get_main_queue(), ^{
-            @try {
-                if ([self respondsToSelector:@selector(dismissVoiceToText)]) {
-                    [self performSelector:@selector(dismissVoiceToText)];
-                }
-            } @catch (NSException *e) { }
-        });
+        // 不再定时收掉：去重已经防止重复请求，
+        // 定时 dismiss 会把已经转出来的文字清掉。
     });
 }
 
