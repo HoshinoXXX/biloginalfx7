@@ -975,6 +975,58 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
     });
 }
 
+// ---- 12.1f 5.9 语音自动转：以 layoutSubviews 为触发点 ----
+// setAioModel: 在 5.9 上从未被调用，改用布局必经路径。
+static void (*orig_voiceCellLayout)(id, SEL);
+static void hook_voiceCellLayout(id self, SEL _cmd) {
+    if (orig_voiceCellLayout) orig_voiceCellLayout(self, _cmd);
+    if (!QQHOn(@"voicetotext", NO)) return;
+
+    // 每调度一次只试一次，用 cell 指针做 key，避免每帧都发请求
+    static NSMutableSet *seen = nil;
+    if (seen == nil) seen = [[NSMutableSet alloc] init];
+    NSString *key = [NSString stringWithFormat:@"%p", self];
+    @synchronized(seen) {
+        if ([seen containsObject:key]) return;
+        [seen addObject:key];
+        if ([seen count] > 300) [seen removeAllObjects];
+    }
+
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.4 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        @try {
+            if ([self respondsToSelector:@selector(requestVoiceToText)]) {
+                [(id)self performSelector:@selector(requestVoiceToText)];
+                QQHPLog(@"[voice59] fired via layout");
+                return;
+            }
+            Class ctrlCls = NSClassFromString(@"DiscussGroupChatViewController");
+            if (ctrlCls == Nil) return;
+            id r = self;
+            int depth = 0;
+            while (r != nil && depth < 20) {
+                if ([r isKindOfClass:ctrlCls]) break;
+                r = [r nextResponder];
+                depth++;
+            }
+            if (r == nil) { QQHPLog(@"[voice59] no controller"); return; }
+            SEL sel = @selector(requestVoiceToText:withObject:);
+            if (![r respondsToSelector:sel]) {
+                QQHPLog(@"[voice59] controller lacks method");
+                return;
+            }
+            typedef void (*QQHCall2)(id, SEL, id, id);
+            QQHCall2 fn = (QQHCall2)[r methodForSelector:sel];
+            if (fn) {
+                fn(r, sel, nil, nil);
+                QQHPLog(@"[voice59] fired via controller");
+            }
+        } @catch (NSException *e) {
+            QQHPLog(@"[voice59] exception: %@", e);
+        }
+    });
+}
+
 // ---- 12.1c 5.9 的语音转文字（接口与 6.2 完全不同）----
 // 5.9 走 DiscussGroupChatViewController：把"显示不支持遮罩"和"支持性判断"放开，
 // 用户点气泡上的按钮即可转文字。不强行自动发起，因为 -requestVoiceToText:withObject:
@@ -1262,6 +1314,9 @@ static void QQHInit(void) {
                 QQHSwizzle(voiceCell, @selector(setAioModel:),
                            (IMP)&hook_voiceCellSetModel,
                            (IMP *)&orig_voiceCellSetModel);
+                QQHSwizzle(voiceCell, @selector(layoutSubviews),
+                           (IMP)&hook_voiceCellLayout,
+                           (IMP *)&orig_voiceCellLayout);
             }
 
         }
