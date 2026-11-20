@@ -966,6 +966,27 @@ static void hook_checkVoiceMask(id self, SEL _cmd) {
     if (orig_checkVoiceMask) orig_checkVoiceMask(self, _cmd);
 }
 
+// ---- 12.1d 5.9 自动转文字：先探明参数 ----
+// -requestVoiceToText:withObject: 的两个参数含义未知，先只记录。
+// 用户手动转一条语音，日志里就有真实类型，下一版据此自动调用。
+static void (*orig_59ReqVoice)(id, SEL, id, id);
+static void hook_59ReqVoice(id self, SEL _cmd, id a, id b) {
+    QQHPLog(@"[voice59] request a=%@(class %@) b=%@(class %@)",
+            a, a ? NSStringFromClass([a class]) : @"nil",
+            b, b ? NSStringFromClass([b class]) : @"nil");
+    if (orig_59ReqVoice) orig_59ReqVoice(self, _cmd, a, b);
+}
+
+// 支持性判断放开，保证「转文字」按钮可用。
+static BOOL (*orig_59CheckSupport)(id, SEL);
+static BOOL hook_59CheckSupport(id self, SEL _cmd) {
+    if (QQHOn(@"voicetotext", NO)) {
+        QQHPLog(@"[voice59] support forced YES");
+        return YES;
+    }
+    return orig_59CheckSupport ? orig_59CheckSupport(self, _cmd) : NO;
+}
+
 // ---- 12.2 输入框提示文本自定义 ----
 // QQTextInputCell -setTextViewPlaceHolder:editingDefaultText:
 // 实测 enc = v16@0:4@8@12 —— 第二个参数是对象，不是 BOOL。
@@ -1239,6 +1260,10 @@ static void QQHInit(void) {
                            (IMP)&hook_displayVoiceMask, (IMP *)&orig_displayVoiceMask);
                 QQHSwizzle(dis, @selector(checkVoiceToTextMask),
                            (IMP)&hook_checkVoiceMask, (IMP *)&orig_checkVoiceMask);
+                QQHSwizzle(dis, @selector(requestVoiceToText:withObject:),
+                           (IMP)&hook_59ReqVoice, (IMP *)&orig_59ReqVoice);
+                QQHSwizzle(dis, @selector(checkVoiceToTextSupport),
+                           (IMP)&hook_59CheckSupport, (IMP *)&orig_59CheckSupport);
             }
 
             Class voiceCell = NSClassFromString(@"QQVoiceCellView");
