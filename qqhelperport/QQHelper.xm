@@ -954,6 +954,25 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
     });
 }
 
+// ---- 12.1c 5.9 的语音转文字（接口与 6.2 完全不同）----
+// 5.9 走 DiscussGroupChatViewController：把"显示不支持遮罩"和"支持性判断"放开，
+// 用户点气泡上的按钮即可转文字。不强行自动发起，因为 -requestVoiceToText:withObject:
+// 的两个参数含义未知，乱调会崩。
+static void (*orig_displayVoiceMask)(id, SEL);
+static void hook_displayVoiceMask(id self, SEL _cmd) {
+    if (QQHOn(@"voicetotext", NO)) {
+        QQHPLog(@"[fired] suppress voiceToText unsupported mask");
+        return;   // 不显示遮罩
+    }
+    if (orig_displayVoiceMask) orig_displayVoiceMask(self, _cmd);
+}
+
+static void (*orig_checkVoiceMask)(id, SEL);
+static void hook_checkVoiceMask(id self, SEL _cmd) {
+    if (QQHOn(@"voicetotext", NO)) return;
+    if (orig_checkVoiceMask) orig_checkVoiceMask(self, _cmd);
+}
+
 // ---- 12.2 输入框提示文本自定义 ----
 // QQTextInputCell -setTextViewPlaceHolder:editingDefaultText:
 // 实测 enc = v16@0:4@8@12 —— 第二个参数是对象，不是 BOOL。
@@ -1220,6 +1239,14 @@ static void QQHInit(void) {
                 QQHSwizzle(appSetting, @selector(setVoiceToTextMask:state:),
                            (IMP)&hook_setVoiceToTextMask,
                            (IMP *)&orig_setVoiceToTextMask);
+
+            Class dis = NSClassFromString(@"DiscussGroupChatViewController");
+            if (dis != Nil) {
+                QQHSwizzle(dis, @selector(displayVoiceToTextMask),
+                           (IMP)&hook_displayVoiceMask, (IMP *)&orig_displayVoiceMask);
+                QQHSwizzle(dis, @selector(checkVoiceToTextMask),
+                           (IMP)&hook_checkVoiceMask, (IMP *)&orig_checkVoiceMask);
+            }
 
             Class voiceCell = NSClassFromString(@"QQVoiceCellView");
             if (voiceCell != Nil) {
