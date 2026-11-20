@@ -979,22 +979,20 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
 
 
 
-// ---- 12.1c 5.9 的语音转文字（接口与 6.2 完全不同）----
+// ---- 12.1c 5.9 语音：(QQHSuppressVoiceHooks) 全部只记录不干预 ----
 // 5.9 走 DiscussGroupChatViewController：把"显示不支持遮罩"和"支持性判断"放开，
 // 用户点气泡上的按钮即可转文字。不强行自动发起，因为 -requestVoiceToText:withObject:
 // 的两个参数含义未知，乱调会崩。
+// 只记录，不拦截：之前直接 return 会让 QQ 以为遮罩已处理，状态不一致。
 static void (*orig_displayVoiceMask)(id, SEL);
 static void hook_displayVoiceMask(id self, SEL _cmd) {
-    if (QQHOn(@"voicetotext", NO)) {
-        QQHPLog(@"[fired] suppress voiceToText unsupported mask");
-        return;   // 不显示遮罩
-    }
+    QQHPLog(@"[voice59] displayVoiceToTextMask called");
     if (orig_displayVoiceMask) orig_displayVoiceMask(self, _cmd);
 }
 
 static void (*orig_checkVoiceMask)(id, SEL);
 static void hook_checkVoiceMask(id self, SEL _cmd) {
-    if (QQHOn(@"voicetotext", NO)) return;
+    QQHPLog(@"[voice59] checkVoiceToTextMask called");
     if (orig_checkVoiceMask) orig_checkVoiceMask(self, _cmd);
 }
 
@@ -1010,13 +1008,12 @@ static void hook_59ReqVoice(id self, SEL _cmd, id a, id b) {
 }
 
 // 支持性判断放开，保证「转文字」按钮可用。
-static BOOL (*orig_59CheckSupport)(id, SEL);
-static BOOL hook_59CheckSupport(id self, SEL _cmd) {
-    if (QQHOn(@"voicetotext", NO)) {
-        QQHPLog(@"[voice59] support forced YES");
-        return YES;
-    }
-    return orig_59CheckSupport ? orig_59CheckSupport(self, _cmd) : NO;
+// 之前强制返回 YES 是崩溃主因：谎报支持会让 QQ 走进缺数据的初始化路径。
+static char (*orig_59CheckSupport)(id, SEL);
+static char hook_59CheckSupport(id self, SEL _cmd) {
+    char v = orig_59CheckSupport ? orig_59CheckSupport(self, _cmd) : 0;
+    QQHPLog(@"[voice59] support = %d (passthrough)", (int)v);
+    return v;
 }
 
 // ============ 15. 去除发图限制 / 移除升级提示 ============
