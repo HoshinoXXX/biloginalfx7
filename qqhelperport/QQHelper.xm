@@ -966,7 +966,9 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
             }
             QQHPLog(@"[voice59] firing on controller model=%@",
                     model ? NSStringFromClass([model class]) : @"nil");
-            [r performSelector:sel withObject:model withObject:nil];
+            typedef void (*QQHCall2)(id, SEL, id, id);
+            QQHCall2 fn = (QQHCall2)[r methodForSelector:sel];
+            if (fn) fn(r, sel, model, nil);
         } @catch (NSException *e) {
             QQHPLog(@"[voice59] exception: %@", e);
         }
@@ -1011,54 +1013,6 @@ static BOOL hook_59CheckSupport(id self, SEL _cmd) {
         return YES;
     }
     return orig_59CheckSupport ? orig_59CheckSupport(self, _cmd) : NO;
-}
-
-// ---- 12.2 输入框提示文本自定义 ----
-// QQTextInputCell -setTextViewPlaceHolder:editingDefaultText:
-// 实测 enc = v16@0:4@8@12 —— 第二个参数是对象，不是 BOOL。
-// 早先按 BOOL 声明会把 0/1 当指针传给原方法，直接崩。
-static void (*orig_setPlaceHolder)(id, SEL, id, id);
-static NSString *QQHLastPlaceHolder = nil;
-
-static void hook_setPlaceHolder(id self, SEL _cmd, id placeholder, id editing) {
-    // 记录每次变化的文案：禁言提示就藏在这里
-    if ([placeholder isKindOfClass:[NSString class]]) {
-        NSString *s = (NSString *)placeholder;
-        if (![s isEqualToString:QQHLastPlaceHolder]) {
-            QQHLastPlaceHolder = s;
-            QQHPLog(@"[ph] %@", s);
-        }
-    }
-
-    if (QQHOn(@"phint", NO)) {
-        NSString *custom = QQHStringPref(@"phintval");
-        if ([custom length] > 0) placeholder = custom;
-    }
-    if (orig_setPlaceHolder) orig_setPlaceHolder(self, _cmd, placeholder, editing);
-}
-
-// ---- 12.3 禁言时间精确到秒 ----
-// QQGroupMemberShutupEngine -requestSetMemberShutup:memUin:shutupDuration:setOrCancel:
-// 把 duration 换成面板里填的秒数。
-// 实测 enc = c32@0:4Q8Q16I24c28 —— 前两个参数是 8 字节整数，不是对象。
-// 用 id（4 字节）承接会让寄存器对错位，改成 unsigned long long。
-static char (*orig_requestShutup)(id, SEL, unsigned long long, unsigned long long,
-                                  unsigned int, char);
-static char hook_requestShutup(id self, SEL _cmd, unsigned long long a,
-                               unsigned long long b, unsigned int duration, char set) {
-    if (QQHOn(@"muteSec", NO) && set) {
-        NSString *s = QQHStringPref(@"muteval");
-        if ([s length] > 0) {
-            int v = [s intValue];
-            if (v > 0 && (unsigned int)v != duration) {
-                QQHPLog(@"[fired] shutup duration %u -> %d", duration, v);
-                duration = (unsigned int)v;
-            }
-        }
-    }
-    if (orig_requestShutup)
-        return orig_requestShutup(self, _cmd, a, b, duration, set);
-    return 0;
 }
 
 // ============ 15. 去除发图限制 / 移除升级提示 ============
@@ -1310,16 +1264,6 @@ static void QQHInit(void) {
                            (IMP *)&orig_voiceCellSetModel);
             }
 
-            Class inputCell = NSClassFromString(@"QQTextInputCell");
-            if (inputCell != Nil)
-                QQHSwizzle(inputCell, @selector(setTextViewPlaceHolder:editingDefaultText:),
-                           (IMP)&hook_setPlaceHolder, (IMP *)&orig_setPlaceHolder);
-
-            Class shutup = NSClassFromString(@"QQGroupMemberShutupEngine");
-            if (shutup != Nil)
-                QQHSwizzle(shutup,
-                           @selector(requestSetMemberShutup:memUin:shutupDuration:setOrCancel:),
-                           (IMP)&hook_requestShutup, (IMP *)&orig_requestShutup);
         }
 
         // 15) 发图限制 / 升级提示
