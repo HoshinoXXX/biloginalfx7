@@ -1137,7 +1137,7 @@ static void QQHHookAllVTTClasses(void) {
             // 关键：按 (类,SEL) 存原实现，不用共享变量
             NSString *key = QQHVTTKey(c, sels[k]);
             if ([QQHVTTOrigMap objectForKey:key] == nil) {
-                [QQHVTTOrigMap setObject:[NSValue valueWithPointer:method_getImplementation(m)]
+                [QQHVTTOrigMap setObject:[NSValue valueWithPointer:(void *)method_getImplementation(m)]
                                   forKey:key];
             }
             class_replaceMethod(c, sels[k], hks[k], method_getTypeEncoding(m));
