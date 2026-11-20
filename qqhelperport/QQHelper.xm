@@ -35,13 +35,38 @@
 // failed to launch in time, CPU 6.4s），元凶就是构造阶段 45+ 次开关文件的 IO。
 static NSMutableString *QQHLogBuf = nil;
 
+// 构造阶段缓冲（避免老设备启动时大量文件 IO 触发看门狗），
+// 构造结束后 eager 模式：每条都追加到磁盘末尾。
+// 关键前缀（fired / [vtt] 等）无论何时都立即落盘。
+static volatile int QQHLogEager = 0;
+
+static void QQHAppendToDisk(NSString *line) {
+    NSString *path = QQHLogPath();
+    NSFileHandle *fh = [NSFileHandle fileHandleForWritingAtPath:path];
+    if (fh == nil) return;
+    @try {
+        [fh seekToEndOfFile];
+        [fh writeData:[line dataUsingEncoding:NSUTF8StringEncoding]];
+        [fh closeFile];
+    } @catch (NSException *e) { }
+}
+
 static void QQHPLog(NSString *fmt, ...) {
     va_list ap;
     va_start(ap, fmt);
     NSString *s = [[NSString alloc] initWithFormat:fmt arguments:ap];
     va_end(ap);
     if (QQHLogBuf == nil) QQHLogBuf = [[NSMutableString alloc] init];
-    [QQHLogBuf appendFormat:@"[QQH] %@\n", s];
+    NSString *line = [NSString stringWithFormat:@"[QQH] %@\n", s];
+    [QQHLogBuf appendString:line];
+
+    BOOL important = ([s rangeOfString:@"fired"].location != NSNotFound ||
+                      [s rangeOfString:@"[vtt]"].location != NSNotFound ||
+                      [s rangeOfString:@"voice59"].location != NSNotFound ||
+                      [s rangeOfString:@"[sel]"].location != NSNotFound ||
+                      [s rangeOfString:@"[zan]"].location != NSNotFound ||
+                      [s rangeOfString:@"[ph]"].location != NSNotFound);
+    if (QQHLogEager || important) QQHAppendToDisk(line);
 }
 
 // 找可写路径（iOS 7 沙盒不让写 /tmp，回退到 App 容器）
@@ -1527,5 +1552,6 @@ static void QQHInit(void) {
 
         QQHPLog(@"init done");
         QQHFlushLog();
+        QQHLogEager = 1;   // 之后每条日志都直接落盘
     }
 }
