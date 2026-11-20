@@ -994,6 +994,52 @@ static void QQHDumpClassMethods(NSString *clsName) {
     if (ms) free(ms);
 }
 
+// ---- 12.1a9 全局扫描所有转文字相关的类 ----
+// 手动转已确认不走 QQVoiceCell / QQVoiceCellView，直接扫全类。
+static void QQHHookAllVTTClasses(void) {
+    int n = objc_getClassList(NULL, 0);
+    if (n <= 0) return;
+    Class *buf = (Class *)malloc(sizeof(Class) * n);
+    if (buf == NULL) return;
+    n = objc_getClassList(buf, n);
+
+    SEL selAnim = @selector(refreshVoiceToTextAnimating:);
+    SEL selText = @selector(voiceToText:);
+    SEL selReq = @selector(requestVoiceToText);
+    int hits = 0;
+
+    for (int i = 0; i < n; i++) {
+        Class c = buf[i];
+        if (c == Nil) continue;
+        const char *nm = class_getName(c);
+        if (nm == NULL) continue;
+        // 只关心名字里带 Voice / Ptt 的，避免误挂无关类
+        if (strstr(nm, "Voice") == NULL && strstr(nm, "Ptt") == NULL &&
+            strstr(nm, "PTT") == NULL) continue;
+
+        BOOL did = NO;
+        if (class_getInstanceMethod(c, selAnim) != NULL) {
+            QQHSwizzle(c, selAnim, (IMP)&hook_refreshVTT, (IMP *)&orig_refreshVTT);
+            did = YES;
+        }
+        if (class_getInstanceMethod(c, selText) != NULL) {
+            QQHSwizzle(c, selText, (IMP)&hook_voiceToTextResult,
+                       (IMP *)&orig_voiceToTextResult);
+            did = YES;
+        }
+        if (class_getInstanceMethod(c, selReq) != NULL) {
+            QQHSwizzle(c, selReq, (IMP)&hook_reqVoiceVC, (IMP *)&orig_reqVoiceVC);
+            did = YES;
+        }
+        if (did) {
+            QQHPLog(@"[vtt] hooked class %s", nm);
+            hits++;
+        }
+    }
+    free(buf);
+    QQHPLog(@"[vtt] total classes hooked = %d", hits);
+}
+
 // ---- 12.1b0 转文字过程探针 ----
 // 手动转成功但 requestVoiceToText 无日志，说明走的是别的路径。
 // 动画刷新与结果回调是必经的，挂上就能定位。
@@ -1358,6 +1404,8 @@ static void QQHInit(void) {
             }
 
             // 只在开了 /tmp/qqhelper-debug 时输出方法列表
+            if (QQHOn(@"voicetotext", NO)) QQHHookAllVTTClasses();
+
             if (QQHDebugOn()) {
                 QQHDumpClassMethods(@"QQVoiceCell");
                 QQHDumpClassMethods(@"QQVoiceCellView");
