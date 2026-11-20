@@ -38,6 +38,7 @@ static NSMutableString *QQHLogBuf = nil;
 // 构造阶段缓冲（避免老设备启动时大量文件 IO 触发看门狗），
 // 构造结束后 eager 模式：每条都追加到磁盘末尾。
 // 关键前缀（fired / [vtt] 等）无论何时都立即落盘。
+static NSString *QQHLogPath(void);   // 前向声明
 static volatile int QQHLogEager = 0;
 
 static void QQHAppendToDisk(NSString *line) {
