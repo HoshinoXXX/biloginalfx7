@@ -992,13 +992,21 @@ static BOOL hook_59CheckSupport(id self, SEL _cmd) {
 // 实测 enc = v16@0:4@8@12 —— 第二个参数是对象，不是 BOOL。
 // 早先按 BOOL 声明会把 0/1 当指针传给原方法，直接崩。
 static void (*orig_setPlaceHolder)(id, SEL, id, id);
+static NSString *QQHLastPlaceHolder = nil;
+
 static void hook_setPlaceHolder(id self, SEL _cmd, id placeholder, id editing) {
+    // 记录每次变化的文案：禁言提示就藏在这里
+    if ([placeholder isKindOfClass:[NSString class]]) {
+        NSString *s = (NSString *)placeholder;
+        if (![s isEqualToString:QQHLastPlaceHolder]) {
+            QQHLastPlaceHolder = s;
+            QQHPLog(@"[ph] %@", s);
+        }
+    }
+
     if (QQHOn(@"phint", NO)) {
         NSString *custom = QQHStringPref(@"phintval");
-        if ([custom length] > 0) {
-            QQHPLog(@"[fired] placeholder -> %@", custom);
-            placeholder = custom;
-        }
+        if ([custom length] > 0) placeholder = custom;
     }
     if (orig_setPlaceHolder) orig_setPlaceHolder(self, _cmd, placeholder, editing);
 }
