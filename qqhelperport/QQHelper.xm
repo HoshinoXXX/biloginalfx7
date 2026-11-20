@@ -1406,7 +1406,8 @@ static void QQHInit(void) {
             }
 
             // 只在开了 /tmp/qqhelper-debug 时输出方法列表
-            if (QQHOn(@"voicetotext", NO)) QQHHookAllVTTClasses();
+            // 无条件扫描：只挂记录型 hook，即使开关没开也能看到真实调用路径。
+            QQHHookAllVTTClasses();
 
             if (QQHDebugOn()) {
                 QQHDumpClassMethods(@"QQVoiceCell");
