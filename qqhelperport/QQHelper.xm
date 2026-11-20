@@ -909,10 +909,30 @@ static void hook_requestVoiceToText(id self, SEL _cmd) {
 // ---- 12.1b 语音气泡出现时自动发起识别 ----
 // 只把灰度开关推成 YES 是不够的：识别是用户在气泡上点小按钮才触发。
 // 这里在气泡拿到数据后主动调它自己的 -requestVoiceToText。
+// 同一个 model 只请求一次识别，避免 cell 复用导致同一气泡反复转圈。
+static NSMutableSet *QQHVoiceRequested = nil;
+
 static void (*orig_voiceCellSetModel)(id, SEL, id);
 static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
     if (orig_voiceCellSetModel) orig_voiceCellSetModel(self, _cmd, model);
-    if (!QQHOn(@"voicetotext", NO)) return;
+    if (!QQHOn(@"voicetotext", NO) || model == nil) return;
+
+    if (QQHVoiceRequested == nil) QQHVoiceRequested = [[NSMutableSet alloc] init];
+
+    // 用 model 的唯一标识；拿不到就退回指针地址
+    id key = nil;
+    @try {
+        if ([model respondsToSelector:@selector(msgId)]) key = [model valueForKey:@"msgId"];
+    } @catch (NSException *e) { }
+    if (key == nil) key = [NSString stringWithFormat:@"%p", model];
+
+    @synchronized(QQHVoiceRequested) {
+        if ([QQHVoiceRequested containsObject:key]) return;
+        [QQHVoiceRequested addObject:key];
+        // 只留最近 500 条，避免长期运行内存涨
+        if ([QQHVoiceRequested count] > 500) [QQHVoiceRequested removeAllObjects];
+    }
+
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
         @try {
@@ -921,6 +941,16 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
                 QQHPLog(@"[fired] auto requestVoiceToText");
             }
         } @catch (NSException *e) { }
+
+        // 8 秒还没出结果就收掉转圈，避免一直转
+        dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(8.0 * NSEC_PER_SEC)),
+                       dispatch_get_main_queue(), ^{
+            @try {
+                if ([self respondsToSelector:@selector(dismissVoiceToText)]) {
+                    [self performSelector:@selector(dismissVoiceToText)];
+                }
+            } @catch (NSException *e) { }
+        });
     });
 }
 
