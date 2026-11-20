@@ -1306,8 +1306,12 @@ static void QQHInit(void) {
                            (IMP)&hook_59CheckSupport, (IMP *)&orig_59CheckSupport);
             }
 
-            Class voiceCell = NSClassFromString(@"QQVoiceCellView");
-            if (voiceCell != Nil) {
+            // 5.9 的气泡可能叫 QQVoiceCell，6.2 叫 QQVoiceCellView，两个都挂。
+            NSArray *voiceClsNames = @[@"QQVoiceCellView", @"QQVoiceCell"];
+            for (NSString *vn in voiceClsNames) {
+                Class voiceCell = NSClassFromString(vn);
+                if (voiceCell == Nil) continue;
+                QQHPLog(@"[voice59] hooking class %@", vn);
                 QQHSwizzle(voiceCell, @selector(requestVoiceToText),
                            (IMP)&hook_requestVoiceToText,
                            (IMP *)&orig_requestVoiceToText);
