@@ -935,15 +935,41 @@ static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
 
     dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
                    dispatch_get_main_queue(), ^{
-        @try {
-            if ([self respondsToSelector:@selector(requestVoiceToText)]) {
+        // 一级：cell 自己有 requestVoiceToText（6.2 的接口）
+        if ([self respondsToSelector:@selector(requestVoiceToText)]) {
+            @try {
                 [self performSelector:@selector(requestVoiceToText)];
-                QQHPLog(@"[fired] auto requestVoiceToText");
-            }
-        } @catch (NSException *e) { }
+                QQHPLog(@"[fired] auto requestVoiceToText (cell)");
+            } @catch (NSException *e) { }
+            return;
+        }
 
-        // 不再定时收掉：去重已经防止重复请求，
-        // 定时 dismiss 会把已经转出来的文字清掉。
+        // 二级：5.9 的接口在 DiscussGroupChatViewController 上
+        @try {
+            Class ctrlCls = NSClassFromString(@"DiscussGroupChatViewController");
+            if (ctrlCls == Nil) return;
+            id r = self;
+            int depth = 0;
+            while (r != nil && depth < 20) {
+                if ([r isKindOfClass:ctrlCls]) break;
+                r = [r nextResponder];
+                depth++;
+            }
+            if (r == nil) {
+                QQHPLog(@"[voice59] controller not found in responder chain");
+                return;
+            }
+            SEL sel = @selector(requestVoiceToText:withObject:);
+            if (![r respondsToSelector:sel]) {
+                QQHPLog(@"[voice59] controller lacks requestVoiceToText:withObject:");
+                return;
+            }
+            QQHPLog(@"[voice59] firing on controller model=%@",
+                    model ? NSStringFromClass([model class]) : @"nil");
+            [r performSelector:sel withObject:model withObject:nil];
+        } @catch (NSException *e) {
+            QQHPLog(@"[voice59] exception: %@", e);
+        }
     });
 }
 
