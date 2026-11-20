@@ -906,6 +906,24 @@ static void hook_requestVoiceToText(id self, SEL _cmd) {
     if (QQHOn(@"voicetotext", NO)) QQHPLog(@"[fired] requestVoiceToText");
 }
 
+// ---- 12.1b 语音气泡出现时自动发起识别 ----
+// 只把灰度开关推成 YES 是不够的：识别是用户在气泡上点小按钮才触发。
+// 这里在气泡拿到数据后主动调它自己的 -requestVoiceToText。
+static void (*orig_voiceCellSetModel)(id, SEL, id);
+static void hook_voiceCellSetModel(id self, SEL _cmd, id model) {
+    if (orig_voiceCellSetModel) orig_voiceCellSetModel(self, _cmd, model);
+    if (!QQHOn(@"voicetotext", NO)) return;
+    dispatch_after(dispatch_time(DISPATCH_TIME_NOW, (int64_t)(0.6 * NSEC_PER_SEC)),
+                   dispatch_get_main_queue(), ^{
+        @try {
+            if ([self respondsToSelector:@selector(requestVoiceToText)]) {
+                [self performSelector:@selector(requestVoiceToText)];
+                QQHPLog(@"[fired] auto requestVoiceToText");
+            }
+        } @catch (NSException *e) { }
+    });
+}
+
 // ---- 12.2 输入框提示文本自定义 ----
 // QQTextInputCell -setTextViewPlaceHolder:editingDefaultText:
 // 实测 enc = v16@0:4@8@12 —— 第二个参数是对象，不是 BOOL。
@@ -1155,10 +1173,14 @@ static void QQHInit(void) {
                            (IMP *)&orig_setVoiceToTextMask);
 
             Class voiceCell = NSClassFromString(@"QQVoiceCellView");
-            if (voiceCell != Nil)
+            if (voiceCell != Nil) {
                 QQHSwizzle(voiceCell, @selector(requestVoiceToText),
                            (IMP)&hook_requestVoiceToText,
                            (IMP *)&orig_requestVoiceToText);
+                QQHSwizzle(voiceCell, @selector(setAioModel:),
+                           (IMP)&hook_voiceCellSetModel,
+                           (IMP *)&orig_voiceCellSetModel);
+            }
 
             Class inputCell = NSClassFromString(@"QQTextInputCell");
             if (inputCell != Nil)
